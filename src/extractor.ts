@@ -62,6 +62,46 @@ async function doExtraction(
       resolvePromise = resolve;
     });
 
+    // Block unnecessary resources to reduce CPU/bandwidth
+    await context.route('**/*', async (route) => {
+      const url = route.request().url();
+      const resourceType = route.request().resourceType();
+
+      // Block images and fonts by resource type (keep stylesheets for button visibility)
+      if (['image', 'font'].includes(resourceType)) {
+        await route.abort();
+        return;
+      }
+
+      // Block by URL patterns
+      const blockPatterns = [
+        // Analytics & tracking
+        /google-analytics\.com/i,
+        /googletagmanager\.com/i,
+        /facebook\.(com|net)/i,
+        /doubleclick\.net/i,
+        /analytics\./i,
+        /hotjar\.com/i,
+        /clarity\.ms/i,
+        // Ads
+        /ads\./i,
+        /adserver\./i,
+        /pagead/i,
+        /prebid/i,
+        // Video previews (not the stream)
+        /\.(mp4|webm)(\?|$)/i,
+      ];
+
+      for (const pattern of blockPatterns) {
+        if (pattern.test(url)) {
+          await route.abort();
+          return;
+        }
+      }
+
+      await route.continue();
+    });
+
     // Set up route interception to ABORT m3u8 requests (preserve token)
     await context.route('**/*.m3u8*', async (route) => {
       const url = route.request().url();
