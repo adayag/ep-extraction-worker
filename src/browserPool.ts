@@ -42,7 +42,6 @@ class BrowserPool {
         '--disable-gpu',
         '--disable-blink-features=AutomationControlled',
         // Memory optimizations
-        '--single-process',
         '--disable-extensions',
         '--disable-background-networking',
         '--disable-sync',
