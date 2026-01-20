@@ -1,27 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock patchright before importing extractor
-vi.mock('patchright', () => ({
-  chromium: {
-    launch: vi.fn(),
-  },
-}));
+// Mock browserPool before importing extractor
+vi.mock('./browserPool.js', () => {
+  const mockContext = {
+    on: vi.fn(),
+    route: vi.fn(),
+    cookies: vi.fn().mockResolvedValue([]),
+    newPage: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
 
-import { extractM3u8, type ExtractedStream } from './extractor.js';
-import { chromium } from 'patchright';
+  return {
+    browserPool: {
+      createContext: vi.fn().mockResolvedValue(mockContext),
+      withLimit: vi.fn((fn: () => Promise<unknown>) => fn()),
+      close: vi.fn(),
+      isRunning: vi.fn().mockReturnValue(true),
+      _mockContext: mockContext, // Expose for test access
+    },
+  };
+});
+
+import { extractM3u8 } from './extractor.js';
+import { browserPool } from './browserPool.js';
 
 describe('extractor', () => {
-  let mockBrowser: {
-    newContext: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-  };
-  let mockContext: {
-    on: ReturnType<typeof vi.fn>;
-    route: ReturnType<typeof vi.fn>;
-    cookies: ReturnType<typeof vi.fn>;
-    newPage: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-  };
   let mockPage: {
     goto: ReturnType<typeof vi.fn>;
     waitForTimeout: ReturnType<typeof vi.fn>;
@@ -30,7 +33,11 @@ describe('extractor', () => {
   };
   let routeCallbacks: Array<(route: unknown) => Promise<void>> = [];
 
+  // Get the mocked context from browserPool
+  const getMockContext = () => (browserPool as unknown as { _mockContext: ReturnType<typeof vi.fn> })._mockContext;
+
   beforeEach(() => {
+    vi.clearAllMocks();
     routeCallbacks = [];
 
     mockPage = {
@@ -42,22 +49,19 @@ describe('extractor', () => {
       frames: vi.fn().mockReturnValue([]),
     };
 
-    mockContext = {
-      on: vi.fn(),
-      route: vi.fn(async (_pattern: string, callback: (route: unknown) => Promise<void>) => {
+    const mockContext = getMockContext();
+    mockContext.on.mockClear();
+    mockContext.route.mockImplementation(
+      async (_pattern: string, callback: (route: unknown) => Promise<void>) => {
         routeCallbacks.push(callback);
-      }),
-      cookies: vi.fn().mockResolvedValue([]),
-      newPage: vi.fn().mockResolvedValue(mockPage),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
+      }
+    );
+    mockContext.cookies.mockResolvedValue([]);
+    mockContext.newPage.mockResolvedValue(mockPage);
+    mockContext.close.mockResolvedValue(undefined);
 
-    mockBrowser = {
-      newContext: vi.fn().mockResolvedValue(mockContext),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-
-    vi.mocked(chromium.launch).mockResolvedValue(mockBrowser as never);
+    vi.mocked(browserPool.createContext).mockResolvedValue(mockContext);
+    vi.mocked(browserPool.withLimit).mockImplementation((fn: () => Promise<unknown>) => fn());
   });
 
   afterEach(() => {
@@ -118,15 +122,16 @@ describe('extractor', () => {
       expect(result).toBeNull();
     }, 10000);
 
-    it('should return null when browser launch fails', async () => {
-      vi.mocked(chromium.launch).mockRejectedValue(new Error('Browser failed'));
+    it('should return null when context creation fails', async () => {
+      vi.mocked(browserPool.createContext).mockRejectedValue(new Error('Browser failed'));
 
       const result = await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
 
       expect(result).toBeNull();
     });
 
-    it('should close browser and context after extraction', async () => {
+    it('should close context after extraction', async () => {
+      const mockContext = getMockContext();
       mockPage.goto.mockImplementation(async () => {
         const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
         for (const cb of routeCallbacks) {
@@ -137,7 +142,6 @@ describe('extractor', () => {
       await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
 
       expect(mockContext.close).toHaveBeenCalled();
-      expect(mockBrowser.close).toHaveBeenCalled();
     });
 
     it('should continue .ts.m3u8 segment URLs and not capture them', async () => {
@@ -187,6 +191,7 @@ describe('extractor', () => {
     });
 
     it('should capture cookies when available', async () => {
+      const mockContext = getMockContext();
       mockContext.cookies.mockResolvedValue([
         { name: 'session', value: 'abc123' },
         { name: 'token', value: 'xyz789' },
@@ -202,6 +207,19 @@ describe('extractor', () => {
       const result = await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
 
       expect(result?.cookies).toBe('session=abc123; token=xyz789');
+    });
+
+    it('should run extraction through concurrency limiter', async () => {
+      mockPage.goto.mockImplementation(async () => {
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
+
+      expect(browserPool.withLimit).toHaveBeenCalled();
     });
   });
 });

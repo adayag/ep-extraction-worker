@@ -1,6 +1,6 @@
-import { chromium } from 'patchright';
-import type { Browser, BrowserContext, Frame } from 'patchright';
+import type { BrowserContext, Frame } from 'patchright';
 import consola from 'consola';
+import { browserPool } from './browserPool.js';
 
 export interface ExtractedStream {
   url: string;
@@ -37,40 +37,16 @@ async function tryClickInFrame(frame: Frame): Promise<void> {
   }
 }
 
-export async function extractM3u8(
+async function doExtraction(
   embedUrl: string,
-  timeout: number = 30000
+  timeout: number
 ): Promise<ExtractedStream | null> {
   consola.debug(`[Extractor] Opening: ${embedUrl}`);
 
-  let browser: Browser | null = null;
   let context: BrowserContext | null = null;
 
   try {
-    browser = await chromium.launch({
-      channel: 'chrome', // Use Chrome instead of Chromium for better stealth
-      executablePath: process.env.CHROME_PATH || undefined,
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-blink-features=AutomationControlled',
-      ],
-    });
-
-    context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      bypassCSP: true,
-      ignoreHTTPSErrors: true,
-      viewport: { width: 1920, height: 1080 },
-      screen: { width: 1920, height: 1080 },
-      deviceScaleFactor: 1,
-      hasTouch: false,
-      isMobile: false,
-    });
+    context = await browserPool.createContext();
 
     // Don't block popups - closing them breaks the main page
     context.on('page', () => {
@@ -191,7 +167,15 @@ export async function extractM3u8(
     consola.error(`[Extractor] Error for ${embedUrl}:`, error);
     return null;
   } finally {
+    // Only close the context, not the browser
     if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
   }
+}
+
+export async function extractM3u8(
+  embedUrl: string,
+  timeout: number = 15000
+): Promise<ExtractedStream | null> {
+  // Run with concurrency limiting
+  return browserPool.withLimit(() => doExtraction(embedUrl, timeout));
 }
