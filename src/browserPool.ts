@@ -49,6 +49,10 @@ class BrowserPool {
         '--disable-default-apps',
         '--no-first-run',
         '--js-flags=--max-old-space-size=128',
+        // Additional CPU optimizations
+        '--disable-software-rasterizer',
+        '--disable-accelerated-2d-canvas',
+        '--mute-audio',
       ],
     });
     consola.info('[BrowserPool] Browser launched');
@@ -62,8 +66,8 @@ class BrowserPool {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       bypassCSP: true,
       ignoreHTTPSErrors: true,
-      viewport: { width: 1920, height: 1080 },
-      screen: { width: 1920, height: 1080 },
+      viewport: { width: 800, height: 600 },
+      screen: { width: 800, height: 600 },
       deviceScaleFactor: 1,
       hasTouch: false,
       isMobile: false,
