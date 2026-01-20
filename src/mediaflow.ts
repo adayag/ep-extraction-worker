@@ -8,7 +8,11 @@ export function getMediaFlowConfig(): MediaFlowConfig {
   };
 }
 
-export function buildMediaFlowUrl(m3u8Url: string, headers?: Record<string, string>): string {
+export function buildMediaFlowUrl(
+  m3u8Url: string,
+  headers?: Record<string, string>,
+  cookies?: string
+): string {
   const config = getMediaFlowConfig();
 
   if (!config.mediaflowProxyUrl) {
@@ -30,6 +34,11 @@ export function buildMediaFlowUrl(m3u8Url: string, headers?: Record<string, stri
     for (const [key, value] of Object.entries(headers)) {
       url.searchParams.set(`h_${key}`, value);
     }
+  }
+
+  // Add cookies as Cookie header
+  if (cookies) {
+    url.searchParams.set('h_Cookie', cookies);
   }
 
   return url.toString();

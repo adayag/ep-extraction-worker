@@ -5,6 +5,7 @@ import consola from 'consola';
 export interface ExtractedStream {
   url: string;
   headers?: Record<string, string>;
+  cookies?: string;
 }
 
 const playSelectors = [
@@ -77,7 +78,7 @@ export async function extractM3u8(
 
     // Create a promise that resolves when m3u8 is found
     const m3u8Promise = new Promise<ExtractedStream | null>((resolve) => {
-      context!.on('request', (request) => {
+      context!.on('request', async (request) => {
         if (resolved) return;
 
         const url = request.url();
@@ -100,6 +101,18 @@ export async function extractM3u8(
 
           consola.info(`[Extractor] Found m3u8: ${url}`);
 
+          // Capture cookies from the context
+          let cookieString: string | undefined;
+          try {
+            const cookies = await context!.cookies();
+            if (cookies.length > 0) {
+              cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+              consola.debug(`[Extractor] Captured ${cookies.length} cookies`);
+            }
+          } catch {
+            consola.debug('[Extractor] Could not capture cookies');
+          }
+
           const refererOrigin = iframeOrigin || new URL(embedUrl).origin;
           resolve({
             url: m3u8Url,
@@ -109,6 +122,7 @@ export async function extractM3u8(
               'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
+            cookies: cookieString,
           });
         }
       });

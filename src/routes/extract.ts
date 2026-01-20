@@ -28,13 +28,14 @@ router.post('/extract', authMiddleware, async (req, res) => {
     return;
   }
 
-  const mediaFlowUrl = buildMediaFlowUrl(extracted.url, extracted.headers);
+  const mediaFlowUrl = buildMediaFlowUrl(extracted.url, extracted.headers, extracted.cookies);
 
   res.json({
     success: true,
     url: mediaFlowUrl,
     m3u8Url: extracted.url,
     headers: extracted.headers,
+    cookies: extracted.cookies,
   });
 });
 

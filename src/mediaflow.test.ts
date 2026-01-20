@@ -81,5 +81,25 @@ describe('mediaflow', () => {
       expect(url.searchParams.get('api_password')).toBe('test');
       expect(url.searchParams.get('h_User-Agent')).toBe('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0');
     });
+
+    it('should add cookies as h_Cookie query param', () => {
+      process.env.MEDIAFLOW_PROXY_URL = 'https://proxy.example.com';
+      const m3u8Url = 'https://stream.example.com/video.m3u8';
+      const headers = { Referer: 'https://embed.example.com/' };
+      const cookies = 'session=abc123; token=xyz789';
+      const result = buildMediaFlowUrl(m3u8Url, headers, cookies);
+
+      const url = new URL(result);
+      expect(url.searchParams.get('h_Cookie')).toBe('session=abc123; token=xyz789');
+    });
+
+    it('should not add h_Cookie when cookies is undefined', () => {
+      process.env.MEDIAFLOW_PROXY_URL = 'https://proxy.example.com';
+      const m3u8Url = 'https://stream.example.com/video.m3u8';
+      const result = buildMediaFlowUrl(m3u8Url, undefined, undefined);
+
+      const url = new URL(result);
+      expect(url.searchParams.has('h_Cookie')).toBe(false);
+    });
   });
 });
