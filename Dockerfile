@@ -21,9 +21,11 @@ FROM node:20-slim AS production
 
 WORKDIR /app
 
-# Install Chromium and dependencies (supports ARM and amd64)
+# Install Google Chrome (amd64 only - better stealth than Chromium)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
+    wget \
+    gnupg \
+    ca-certificates \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -41,10 +43,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
+    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && dpkg -i google-chrome-stable_current_amd64.deb || apt-get -f install -y \
+    && rm google-chrome-stable_current_amd64.deb \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Tell Patchright to use system Chromium
-ENV CHROME_PATH=/usr/bin/chromium
+# Chrome path for Patchright (channel: 'chrome' finds it automatically)
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
 
 # Create non-root user
 RUN groupadd -g 1001 nodejs && \
