@@ -70,72 +70,89 @@ export async function extractM3u8(
       consola.debug('[Extractor] Popup opened (not blocking)');
     });
 
-    const page = await context.newPage();
-
     let m3u8Url: string | null = null;
-    let iframeOrigin: string | null = null;
+    let m3u8Referer: string | null = null;
     let resolved = false;
+    let resolvePromise: (value: ExtractedStream | null) => void;
 
-    // Create a promise that resolves when m3u8 is found
     const m3u8Promise = new Promise<ExtractedStream | null>((resolve) => {
-      context!.on('request', async (request) => {
-        if (resolved) return;
-
-        const url = request.url();
-
-        if (url.includes('.m3u8') && !url.includes('.ts.m3u8') && !m3u8Url) {
-          m3u8Url = url;
-          resolved = true;
-
-          const frame = request.frame();
-          if (frame) {
-            try {
-              const frameUrl = frame.url();
-              if (frameUrl && !frameUrl.startsWith('about:')) {
-                iframeOrigin = new URL(frameUrl).origin;
-              }
-            } catch {
-              iframeOrigin = null;
-            }
-          }
-
-          consola.info(`[Extractor] Found m3u8: ${url}`);
-
-          // Capture cookies from the context
-          let cookieString: string | undefined;
-          try {
-            const cookies = await context!.cookies();
-            if (cookies.length > 0) {
-              cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-              consola.debug(`[Extractor] Captured ${cookies.length} cookies`);
-            }
-          } catch {
-            consola.debug('[Extractor] Could not capture cookies');
-          }
-
-          const refererOrigin = iframeOrigin || new URL(embedUrl).origin;
-          resolve({
-            url: m3u8Url,
-            headers: {
-              Referer: refererOrigin + '/',
-              Origin: refererOrigin,
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            cookies: cookieString,
-          });
-        }
-      });
-
-      // Timeout
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          consola.warn(`[Extractor] No m3u8 found after ${timeout}ms: ${embedUrl}`);
-          resolve(null);
-        }
-      }, timeout);
+      resolvePromise = resolve;
     });
+
+    // Set up route interception to ABORT m3u8 requests (preserve token)
+    await context.route('**/*.m3u8*', async (route) => {
+      const url = route.request().url();
+
+      // Skip segment playlists
+      if (url.includes('.ts.m3u8')) {
+        await route.continue();
+        return;
+      }
+
+      // Already found one, let subsequent requests through
+      if (resolved) {
+        await route.abort();
+        return;
+      }
+
+      m3u8Url = url;
+      resolved = true;
+
+      // Get referer from request headers
+      const headers = route.request().headers();
+      m3u8Referer = headers['referer'] || null;
+
+      consola.info(`[Extractor] Found m3u8 (aborted to preserve token): ${url}`);
+
+      // ABORT the request so the token isn't consumed
+      await route.abort();
+
+      // Capture cookies from the context
+      let cookieString: string | undefined;
+      try {
+        const cookies = await context!.cookies();
+        if (cookies.length > 0) {
+          cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+          consola.debug(`[Extractor] Captured ${cookies.length} cookies`);
+        }
+      } catch {
+        consola.debug('[Extractor] Could not capture cookies');
+      }
+
+      // Use referer from request, or fall back to embed URL origin
+      let refererOrigin: string;
+      if (m3u8Referer) {
+        try {
+          refererOrigin = new URL(m3u8Referer).origin;
+        } catch {
+          refererOrigin = new URL(embedUrl).origin;
+        }
+      } else {
+        refererOrigin = new URL(embedUrl).origin;
+      }
+
+      resolvePromise({
+        url: m3u8Url,
+        headers: {
+          Referer: refererOrigin + '/',
+          Origin: refererOrigin,
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        cookies: cookieString,
+      });
+    });
+
+    // Timeout handler
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        consola.warn(`[Extractor] No m3u8 found after ${timeout}ms: ${embedUrl}`);
+        resolvePromise(null);
+      }
+    }, timeout);
+
+    const page = await context.newPage();
 
     // Navigate
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
