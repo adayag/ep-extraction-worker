@@ -71,6 +71,9 @@ class BrowserPool {
       deviceScaleFactor: 1,
       hasTouch: false,
       isMobile: false,
+      // Performance optimizations
+      serviceWorkers: 'block',
+      reducedMotion: 'reduce',
     });
   }
 

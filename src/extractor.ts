@@ -2,6 +2,41 @@ import type { BrowserContext, Frame } from 'patchright';
 import consola from 'consola';
 import { browserPool } from './browserPool.js';
 
+// Cached patterns for performance (compiled once at module load)
+const BLOCK_PATTERNS = [
+  // Analytics & tracking
+  /google-analytics\.com/i,
+  /googletagmanager\.com/i,
+  /facebook\.(com|net)/i,
+  /doubleclick\.net/i,
+  /analytics\./i,
+  /hotjar\.com/i,
+  /clarity\.ms/i,
+  // Additional tracking services
+  /sentry\.io/i,
+  /segment\.(com|io)/i,
+  /mixpanel\.com/i,
+  /amplitude\.com/i,
+  /newrelic\.com/i,
+  /bugsnag\.com/i,
+  /datadog/i,
+  // Ads
+  /ads\./i,
+  /adserver\./i,
+  /pagead/i,
+  /prebid/i,
+  /adsystem/i,
+  /adservice/i,
+  // Video previews (not the stream)
+  /\.(mp4|webm)(\?|$)/i,
+];
+
+// Player domains to allow scripts from
+const PLAYER_DOMAINS = ['player', 'jwplayer', 'plyr', 'video', 'embed', 'hls', 'dash', 'stream'];
+
+// Telemetry patterns for XHR/Fetch blocking
+const TELEMETRY_PATTERN = /analytics|tracking|beacon|metrics|telemetry|collect|log|event/i;
+
 export interface ExtractedStream {
   url: string;
   headers?: Record<string, string>;
@@ -63,36 +98,40 @@ async function doExtraction(
     });
 
     // Block unnecessary resources to reduce CPU/bandwidth
+    // Patterns cached at module level for performance
     await context.route('**/*', async (route) => {
       const url = route.request().url();
       const resourceType = route.request().resourceType();
 
-      // Block images and fonts by resource type (keep stylesheets for button visibility)
-      if (['image', 'font'].includes(resourceType)) {
+      // Block images, fonts, and stylesheets by resource type
+      if (['image', 'font', 'stylesheet'].includes(resourceType)) {
         await route.abort();
         return;
       }
 
-      // Block by URL patterns
-      const blockPatterns = [
-        // Analytics & tracking
-        /google-analytics\.com/i,
-        /googletagmanager\.com/i,
-        /facebook\.(com|net)/i,
-        /doubleclick\.net/i,
-        /analytics\./i,
-        /hotjar\.com/i,
-        /clarity\.ms/i,
-        // Ads
-        /ads\./i,
-        /adserver\./i,
-        /pagead/i,
-        /prebid/i,
-        // Video previews (not the stream)
-        /\.(mp4|webm)(\?|$)/i,
-      ];
+      // Block non-player scripts
+      if (resourceType === 'script') {
+        const isPlayerScript = PLAYER_DOMAINS.some((d) => url.toLowerCase().includes(d));
+        if (!isPlayerScript) {
+          for (const pattern of BLOCK_PATTERNS) {
+            if (pattern.test(url)) {
+              await route.abort();
+              return;
+            }
+          }
+        }
+      }
 
-      for (const pattern of blockPatterns) {
+      // Block telemetry XHR/Fetch requests
+      if (['xhr', 'fetch'].includes(resourceType)) {
+        if (TELEMETRY_PATTERN.test(url)) {
+          await route.abort();
+          return;
+        }
+      }
+
+      // Block by URL patterns
+      for (const pattern of BLOCK_PATTERNS) {
         if (pattern.test(url)) {
           await route.abort();
           return;
