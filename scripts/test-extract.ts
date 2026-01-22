@@ -149,11 +149,63 @@ async function extractM3u8(
       resolvePromise = resolve;
     });
 
-    // Resource blocking route
+    // Single route handler for blocking AND m3u8 detection
+    // (separate regex routes don't work reliably with URLs containing port numbers)
     await context.route('**/*', async (route) => {
       totalRequests++;
       const url = route.request().url();
       const resourceType = route.request().resourceType();
+
+      // Check for m3u8 FIRST (before any blocking)
+      if (url.includes('.m3u8') && !url.includes('.ts.m3u8')) {
+        if (resolved) {
+          await route.abort();
+          return;
+        }
+
+        m3u8Url = url;
+        resolved = true;
+
+        const headers = route.request().headers();
+        m3u8Referer = headers['referer'] || null;
+
+        if (config.verbose) {
+          console.log(`  ✓ Found m3u8: ${url.substring(0, 80)}...`);
+        }
+
+        let cookieString: string | undefined;
+        try {
+          const cookies = await context!.cookies();
+          if (cookies.length > 0) {
+            cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+          }
+        } catch {}
+
+        await route.abort();
+
+        let refererOrigin: string;
+        if (m3u8Referer) {
+          try {
+            refererOrigin = new URL(m3u8Referer).origin;
+          } catch {
+            refererOrigin = new URL(embedUrl).origin;
+          }
+        } else {
+          refererOrigin = new URL(embedUrl).origin;
+        }
+
+        resolvePromise({
+          url: m3u8Url,
+          headers: {
+            Referer: refererOrigin + '/',
+            Origin: refererOrigin,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+          cookies: cookieString,
+        });
+        return;
+      }
 
       if (['image', 'font', 'stylesheet'].includes(resourceType)) {
         blockedRequests++;
@@ -191,63 +243,6 @@ async function extractM3u8(
       }
 
       await route.continue();
-    });
-
-    // M3u8 interception route
-    await context.route('**/*.m3u8*', async (route) => {
-      const url = route.request().url();
-
-      if (url.includes('.ts.m3u8')) {
-        await route.continue();
-        return;
-      }
-
-      if (resolved) {
-        await route.abort();
-        return;
-      }
-
-      m3u8Url = url;
-      resolved = true;
-
-      const headers = route.request().headers();
-      m3u8Referer = headers['referer'] || null;
-
-      if (config.verbose) {
-        console.log(`  ✓ Found m3u8: ${url.substring(0, 80)}...`);
-      }
-
-      await route.abort();
-
-      let cookieString: string | undefined;
-      try {
-        const cookies = await context!.cookies();
-        if (cookies.length > 0) {
-          cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-        }
-      } catch {}
-
-      let refererOrigin: string;
-      if (m3u8Referer) {
-        try {
-          refererOrigin = new URL(m3u8Referer).origin;
-        } catch {
-          refererOrigin = new URL(embedUrl).origin;
-        }
-      } else {
-        refererOrigin = new URL(embedUrl).origin;
-      }
-
-      resolvePromise({
-        url: m3u8Url,
-        headers: {
-          Referer: refererOrigin + '/',
-          Origin: refererOrigin,
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-        cookies: cookieString,
-      });
     });
 
     // Timeout handler

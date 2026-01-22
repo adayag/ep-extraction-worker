@@ -96,11 +96,73 @@ async function doExtraction(
       resolvePromise = resolve;
     });
 
-    // Block unnecessary resources to reduce CPU/bandwidth
-    // Patterns cached at module level for performance
+    // Single route handler for blocking AND m3u8 detection
+    // (separate regex routes don't work reliably with URLs containing port numbers)
     await context.route('**/*', async (route) => {
       const url = route.request().url();
       const resourceType = route.request().resourceType();
+
+      // Check for m3u8 FIRST (before any blocking)
+      if (url.includes('.m3u8') && !url.includes('.ts.m3u8')) {
+        // Race condition fix: check and set resolved atomically
+        if (resolved) {
+          await route.abort();
+          return;
+        }
+        resolved = true; // Set immediately before any async operations
+
+        // Clear timeout since we found m3u8
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
+        // Get referer from request headers
+        const headers = route.request().headers();
+        const m3u8Referer = headers['referer'] || null;
+
+        consola.info(`[Extractor] Found m3u8 (aborted to preserve token): ${url}`);
+
+        // Race condition fix: Capture cookies BEFORE aborting request
+        // to ensure context is still valid
+        let cookieString: string | undefined;
+        try {
+          const cookies = await context!.cookies();
+          if (cookies.length > 0) {
+            cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+            consola.debug(`[Extractor] Captured ${cookies.length} cookies`);
+          }
+        } catch {
+          consola.debug('[Extractor] Could not capture cookies');
+        }
+
+        // ABORT the request so the token isn't consumed
+        await route.abort();
+
+        // Use referer from request, or fall back to embed URL origin
+        let refererOrigin: string;
+        if (m3u8Referer) {
+          try {
+            refererOrigin = new URL(m3u8Referer).origin;
+          } catch {
+            refererOrigin = new URL(embedUrl).origin;
+          }
+        } else {
+          refererOrigin = new URL(embedUrl).origin;
+        }
+
+        resolvePromise({
+          url,
+          headers: {
+            Referer: refererOrigin + '/',
+            Origin: refererOrigin,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+          cookies: cookieString,
+        });
+        return;
+      }
 
       // Block images, fonts, and stylesheets by resource type
       if (['image', 'font', 'stylesheet'].includes(resourceType)) {
@@ -135,75 +197,6 @@ async function doExtraction(
       }
 
       await route.continue();
-    });
-
-    // Set up route interception to ABORT m3u8 requests (preserve token)
-    await context.route('**/*.m3u8*', async (route) => {
-      const url = route.request().url();
-
-      // Skip segment playlists
-      if (url.includes('.ts.m3u8')) {
-        await route.continue();
-        return;
-      }
-
-      // Race condition fix: check and set resolved atomically
-      if (resolved) {
-        await route.abort();
-        return;
-      }
-      resolved = true; // Set immediately before any async operations
-
-      // Clear timeout since we found m3u8
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-
-      // Get referer from request headers
-      const headers = route.request().headers();
-      const m3u8Referer = headers['referer'] || null;
-
-      consola.info(`[Extractor] Found m3u8 (aborted to preserve token): ${url}`);
-
-      // Race condition fix: Capture cookies BEFORE aborting request
-      // to ensure context is still valid
-      let cookieString: string | undefined;
-      try {
-        const cookies = await context!.cookies();
-        if (cookies.length > 0) {
-          cookieString = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-          consola.debug(`[Extractor] Captured ${cookies.length} cookies`);
-        }
-      } catch {
-        consola.debug('[Extractor] Could not capture cookies');
-      }
-
-      // ABORT the request so the token isn't consumed
-      await route.abort();
-
-      // Use referer from request, or fall back to embed URL origin
-      let refererOrigin: string;
-      if (m3u8Referer) {
-        try {
-          refererOrigin = new URL(m3u8Referer).origin;
-        } catch {
-          refererOrigin = new URL(embedUrl).origin;
-        }
-      } else {
-        refererOrigin = new URL(embedUrl).origin;
-      }
-
-      resolvePromise({
-        url,
-        headers: {
-          Referer: refererOrigin + '/',
-          Origin: refererOrigin,
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-        cookies: cookieString,
-      });
     });
 
     // Timeout handler with memory leak fix
