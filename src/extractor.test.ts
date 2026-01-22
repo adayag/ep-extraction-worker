@@ -69,11 +69,12 @@ describe('extractor', () => {
   });
 
   // Helper to create mock route object
-  function createMockRoute(url: string, referer?: string) {
+  function createMockRoute(url: string, referer?: string, resourceType: string = 'xhr') {
     return {
       request: () => ({
         url: () => url,
         headers: () => (referer ? { referer } : {}),
+        resourceType: () => resourceType,
       }),
       abort: vi.fn().mockResolvedValue(undefined),
       continue: vi.fn().mockResolvedValue(undefined),

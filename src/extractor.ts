@@ -31,8 +31,8 @@ const BLOCK_PATTERNS = [
   /\.(mp4|webm)(\?|$)/i,
 ];
 
-// Player domains to allow scripts from
-const PLAYER_DOMAINS = ['player', 'jwplayer', 'plyr', 'video', 'embed', 'hls', 'dash', 'stream'];
+// Single regex for player domain detection (more efficient than array iteration)
+const PLAYER_DOMAIN_REGEX = /player|jwplayer|plyr|video|embed|hls|dash|stream/i;
 
 // Telemetry patterns for XHR/Fetch blocking
 const TELEMETRY_PATTERN = /analytics|tracking|beacon|metrics|telemetry|collect|log|event/i;
@@ -61,7 +61,7 @@ async function tryClickInFrame(frame: Frame): Promise<void> {
       if (element) {
         const box = await element.boundingBox();
         if (box && box.width > 0 && box.height > 0) {
-          await element.click({ timeout: 2000 }).catch(() => {});
+          await element.click({ timeout: 500 }).catch(() => {});
           consola.debug(`[Extractor] Clicked: ${selector}`);
           return;
         }
@@ -79,6 +79,7 @@ async function doExtraction(
   consola.debug(`[Extractor] Opening: ${embedUrl}`);
 
   let context: BrowserContext | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   try {
     context = await browserPool.createContext();
@@ -88,8 +89,6 @@ async function doExtraction(
       consola.debug('[Extractor] Popup opened (not blocking)');
     });
 
-    let m3u8Url: string | null = null;
-    let m3u8Referer: string | null = null;
     let resolved = false;
     let resolvePromise: (value: ExtractedStream | null) => void;
 
@@ -109,16 +108,15 @@ async function doExtraction(
         return;
       }
 
-      // Block non-player scripts
+      // Check URL against block patterns once (consolidated)
+      const shouldBlock = BLOCK_PATTERNS.some((pattern) => pattern.test(url));
+
+      // Block non-player scripts that match block patterns
       if (resourceType === 'script') {
-        const isPlayerScript = PLAYER_DOMAINS.some((d) => url.toLowerCase().includes(d));
-        if (!isPlayerScript) {
-          for (const pattern of BLOCK_PATTERNS) {
-            if (pattern.test(url)) {
-              await route.abort();
-              return;
-            }
-          }
+        const isPlayerScript = PLAYER_DOMAIN_REGEX.test(url);
+        if (!isPlayerScript && shouldBlock) {
+          await route.abort();
+          return;
         }
       }
 
@@ -130,12 +128,10 @@ async function doExtraction(
         }
       }
 
-      // Block by URL patterns
-      for (const pattern of BLOCK_PATTERNS) {
-        if (pattern.test(url)) {
-          await route.abort();
-          return;
-        }
+      // Block by URL patterns (already computed)
+      if (shouldBlock) {
+        await route.abort();
+        return;
       }
 
       await route.continue();
@@ -151,25 +147,27 @@ async function doExtraction(
         return;
       }
 
-      // Already found one, let subsequent requests through
+      // Race condition fix: check and set resolved atomically
       if (resolved) {
         await route.abort();
         return;
       }
+      resolved = true; // Set immediately before any async operations
 
-      m3u8Url = url;
-      resolved = true;
+      // Clear timeout since we found m3u8
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
 
       // Get referer from request headers
       const headers = route.request().headers();
-      m3u8Referer = headers['referer'] || null;
+      const m3u8Referer = headers['referer'] || null;
 
       consola.info(`[Extractor] Found m3u8 (aborted to preserve token): ${url}`);
 
-      // ABORT the request so the token isn't consumed
-      await route.abort();
-
-      // Capture cookies from the context
+      // Race condition fix: Capture cookies BEFORE aborting request
+      // to ensure context is still valid
       let cookieString: string | undefined;
       try {
         const cookies = await context!.cookies();
@@ -180,6 +178,9 @@ async function doExtraction(
       } catch {
         consola.debug('[Extractor] Could not capture cookies');
       }
+
+      // ABORT the request so the token isn't consumed
+      await route.abort();
 
       // Use referer from request, or fall back to embed URL origin
       let refererOrigin: string;
@@ -194,7 +195,7 @@ async function doExtraction(
       }
 
       resolvePromise({
-        url: m3u8Url,
+        url,
         headers: {
           Referer: refererOrigin + '/',
           Origin: refererOrigin,
@@ -205,8 +206,8 @@ async function doExtraction(
       });
     });
 
-    // Timeout handler
-    setTimeout(() => {
+    // Timeout handler with memory leak fix
+    timeoutId = setTimeout(() => {
       if (!resolved) {
         resolved = true;
         consola.warn(`[Extractor] No m3u8 found after ${timeout}ms: ${embedUrl}`);
@@ -219,23 +220,20 @@ async function doExtraction(
     // Navigate
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
 
-    // Wait for page to settle
-    await page.waitForTimeout(2000).catch(() => {});
+    // Wait for page to settle (reduced from 2000ms)
+    await page.waitForTimeout(500).catch(() => {});
 
     // Try clicking play on main page
     if (!resolved) {
       await tryClickInFrame(page.mainFrame());
-      await page.waitForTimeout(1000).catch(() => {});
+      await page.waitForTimeout(500).catch(() => {});
     }
 
-    // Try clicking play in iframes
+    // Try clicking play in iframes (parallelized)
     if (!resolved) {
-      const frames = page.frames();
-      for (const frame of frames) {
-        if (resolved) break;
-        if (frame === page.mainFrame()) continue;
-        await tryClickInFrame(frame);
-        await page.waitForTimeout(500).catch(() => {});
+      const frames = page.frames().filter((f) => f !== page.mainFrame());
+      if (frames.length > 0) {
+        await Promise.all(frames.map((frame) => tryClickInFrame(frame).catch(() => {})));
       }
     }
 
@@ -246,6 +244,10 @@ async function doExtraction(
     consola.error(`[Extractor] Error for ${embedUrl}:`, error);
     return null;
   } finally {
+    // Clear timeout to prevent memory leak
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
     // Only close the context, not the browser
     if (context) await context.close().catch(() => {});
   }

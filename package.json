@@ -9,7 +9,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "test:browser": "tsx scripts/test-extract.ts",
+    "test:browser:interactive": "tsx scripts/test-extract.ts --interactive",
+    "test:browser:verbose": "tsx scripts/test-extract.ts --verbose"
   },
   "dependencies": {
     "consola": "^3.2.3",

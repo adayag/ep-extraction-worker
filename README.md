@@ -170,7 +170,7 @@ CMD ["node", "dist/index.js"]
 ## Testing
 
 ```bash
-# Run tests
+# Run unit tests
 npm test
 
 # Run tests once
@@ -178,7 +178,12 @@ npm run test:run
 
 # Type check
 npx tsc --noEmit
+
+# Browser test with real embeds
+npm run test:browser:verbose "https://embedsports.top/embed/..."
 ```
+
+See [docs/benchmark.md](docs/benchmark.md) for performance benchmarks and test methodology.
 
 ## Integration with EP Live Events
 

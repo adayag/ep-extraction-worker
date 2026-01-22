@@ -11,8 +11,14 @@ class BrowserPool {
   private limiter = pLimit(MAX_CONCURRENT);
 
   async getBrowser(): Promise<Browser> {
+    // Check if existing browser is still connected
     if (this.browser) {
-      return this.browser;
+      if (this.browser.isConnected()) {
+        return this.browser;
+      }
+      // Browser disconnected, clear reference
+      consola.warn('[BrowserPool] Browser disconnected, will relaunch');
+      this.browser = null;
     }
 
     // Prevent multiple simultaneous launches
@@ -55,6 +61,15 @@ class BrowserPool {
         '--mute-audio',
       ],
     });
+
+    // Handle browser disconnect/crash - clear reference so next request relaunches
+    browser.on('disconnected', () => {
+      consola.warn('[BrowserPool] Browser disconnected unexpectedly');
+      if (this.browser === browser) {
+        this.browser = null;
+      }
+    });
+
     consola.info('[BrowserPool] Browser launched');
     return browser;
   }
