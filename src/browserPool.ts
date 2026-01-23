@@ -87,7 +87,6 @@ class BrowserPool {
       hasTouch: false,
       isMobile: false,
       // Performance optimizations
-      serviceWorkers: 'block',
       reducedMotion: 'reduce',
     });
   }

@@ -137,7 +137,6 @@ async function extractM3u8(
       deviceScaleFactor: 1,
       hasTouch: false,
       isMobile: false,
-      serviceWorkers: 'block',
     });
 
     let m3u8Url: string | null = null;
