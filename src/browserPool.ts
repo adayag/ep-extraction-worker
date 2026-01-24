@@ -162,8 +162,9 @@ class BrowserPool {
   private async restartBrowser(): Promise<void> {
     this.clearIdleTimer();
     if (this.browser) {
-      await this.browser.close().catch(() => {});
-      this.browser = null;
+      const oldBrowser = this.browser;
+      this.browser = null; // Set null FIRST to avoid race with getBrowser()
+      await oldBrowser.close().catch(() => {});
     }
   }
 
@@ -171,8 +172,9 @@ class BrowserPool {
     this.clearIdleTimer();
     if (this.browser) {
       consola.info('[BrowserPool] Closing browser...');
-      await this.browser.close().catch(() => {});
-      this.browser = null;
+      const oldBrowser = this.browser;
+      this.browser = null; // Set null FIRST to avoid race with getBrowser()
+      await oldBrowser.close().catch(() => {});
       consola.info('[BrowserPool] Browser closed');
     }
   }
