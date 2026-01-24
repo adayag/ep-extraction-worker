@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# local testing scripts
+scripts/
+
 # Environment
 .env
 
