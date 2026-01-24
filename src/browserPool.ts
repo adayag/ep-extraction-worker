@@ -4,21 +4,34 @@ import consola from 'consola';
 import pLimit from 'p-limit';
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
+const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT || '60000', 10); // 60 seconds
+const MAX_AGE_MS = parseInt(process.env.BROWSER_MAX_AGE || '7200000', 10); // 2 hours
 
 class BrowserPool {
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
   private limiter = pLimit(MAX_CONCURRENT);
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private launchTime: number = 0;
+  private activeCount = 0;
 
   async getBrowser(): Promise<Browser> {
     // Check if existing browser is still connected
     if (this.browser) {
       if (this.browser.isConnected()) {
-        return this.browser;
+        // Check max-age - restart if exceeded and no active extractions
+        const age = Date.now() - this.launchTime;
+        if (age > MAX_AGE_MS && this.activeCount === 0) {
+          consola.info(`[BrowserPool] Max age exceeded (${Math.round(age / 1000)}s), restarting browser`);
+          await this.restartBrowser();
+        } else {
+          return this.browser;
+        }
+      } else {
+        // Browser disconnected, clear reference
+        consola.warn('[BrowserPool] Browser disconnected, will relaunch');
+        this.browser = null;
       }
-      // Browser disconnected, clear reference
-      consola.warn('[BrowserPool] Browser disconnected, will relaunch');
-      this.browser = null;
     }
 
     // Prevent multiple simultaneous launches
@@ -37,6 +50,7 @@ class BrowserPool {
 
   private async launchBrowser(): Promise<Browser> {
     consola.info('[BrowserPool] Launching browser...');
+    this.launchTime = Date.now();
     const browser = await chromium.launch({
       channel: 'chrome',
       executablePath: process.env.CHROME_PATH || undefined,
@@ -98,10 +112,51 @@ class BrowserPool {
    * Run an extraction function with concurrency limiting
    */
   async withLimit<T>(fn: () => Promise<T>): Promise<T> {
-    return this.limiter(fn);
+    return this.limiter(async () => {
+      // Clear idle timer when extraction starts
+      this.clearIdleTimer();
+      this.activeCount++;
+
+      try {
+        return await fn();
+      } finally {
+        this.activeCount--;
+        // Schedule idle restart after extraction completes (if no more active)
+        if (this.activeCount === 0) {
+          this.scheduleIdleRestart();
+        }
+      }
+    });
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  private scheduleIdleRestart(): void {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(async () => {
+      if (this.activeCount === 0 && this.browser) {
+        const age = Math.round((Date.now() - this.launchTime) / 1000);
+        consola.info(`[BrowserPool] Idle restart (age: ${age}s)`);
+        await this.restartBrowser();
+      }
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  private async restartBrowser(): Promise<void> {
+    this.clearIdleTimer();
+    if (this.browser) {
+      await this.browser.close().catch(() => {});
+      this.browser = null;
+    }
   }
 
   async close(): Promise<void> {
+    this.clearIdleTimer();
     if (this.browser) {
       consola.info('[BrowserPool] Closing browser...');
       await this.browser.close().catch(() => {});

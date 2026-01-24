@@ -5,8 +5,10 @@ vi.mock('./browserPool.js', () => {
   const mockContext = {
     on: vi.fn(),
     route: vi.fn(),
+    unroute: vi.fn().mockResolvedValue(undefined),
     cookies: vi.fn().mockResolvedValue([]),
     newPage: vi.fn(),
+    pages: vi.fn().mockReturnValue([]),
     close: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -221,6 +223,74 @@ describe('extractor', () => {
       await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
 
       expect(browserPool.withLimit).toHaveBeenCalled();
+    });
+
+    it('should unroute before closing context', async () => {
+      const mockContext = getMockContext();
+      mockPage.goto.mockImplementation(async () => {
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
+
+      expect(mockContext.unroute).toHaveBeenCalledWith('**/*');
+      // Verify unroute was called before close
+      const unrouteOrder = mockContext.unroute.mock.invocationCallOrder[0];
+      const closeOrder = mockContext.close.mock.invocationCallOrder[0];
+      expect(unrouteOrder).toBeLessThan(closeOrder);
+    });
+
+    it('should close all pages before closing context', async () => {
+      const mockContext = getMockContext();
+      const mockPageToClose = { close: vi.fn().mockResolvedValue(undefined) };
+      mockContext.pages.mockReturnValue([mockPageToClose]);
+
+      mockPage.goto.mockImplementation(async () => {
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
+
+      expect(mockPageToClose.close).toHaveBeenCalled();
+      // Verify page was closed before context.close
+      const pageCloseOrder = mockPageToClose.close.mock.invocationCallOrder[0];
+      const contextCloseOrder = mockContext.close.mock.invocationCallOrder[0];
+      expect(pageCloseOrder).toBeLessThan(contextCloseOrder);
+    });
+
+    it('should close popup pages immediately', async () => {
+      const mockContext = getMockContext();
+      let pageHandler: ((page: unknown) => void) | null = null;
+
+      // Capture the page event handler
+      mockContext.on.mockImplementation((event: string, handler: (page: unknown) => void) => {
+        if (event === 'page') {
+          pageHandler = handler;
+        }
+      });
+
+      const mockPopup = { close: vi.fn().mockResolvedValue(undefined) };
+
+      mockPage.goto.mockImplementation(async () => {
+        // Simulate popup opening during navigation
+        if (pageHandler) {
+          pageHandler(mockPopup);
+        }
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
+
+      expect(mockPopup.close).toHaveBeenCalled();
     });
   });
 });

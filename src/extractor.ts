@@ -84,9 +84,10 @@ async function doExtraction(
   try {
     context = await browserPool.createContext();
 
-    // Don't block popups - closing them breaks the main page
-    context.on('page', () => {
-      consola.debug('[Extractor] Popup opened (not blocking)');
+    // Close popup pages immediately to prevent memory accumulation
+    context.on('page', async (page) => {
+      consola.debug('[Extractor] Closing popup');
+      await page.close().catch(() => {});
     });
 
     let resolved = false;
@@ -241,8 +242,15 @@ async function doExtraction(
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
-    // Only close the context, not the browser
-    if (context) await context.close().catch(() => {});
+    if (context) {
+      // Clean up route handlers to release closures
+      await context.unroute('**/*').catch(() => {});
+      // Close all pages explicitly
+      const pages = context.pages();
+      await Promise.all(pages.map((p) => p.close().catch(() => {})));
+      // Then close context
+      await context.close().catch(() => {});
+    }
   }
 }
 

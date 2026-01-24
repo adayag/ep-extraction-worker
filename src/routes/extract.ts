@@ -2,7 +2,6 @@ import { Router } from 'express';
 import consola from 'consola';
 import { authMiddleware } from '../middleware/auth.js';
 import { extractM3u8 } from '../extractor.js';
-import { buildMediaFlowUrl } from '../mediaflow.js';
 
 const router = Router();
 
@@ -25,13 +24,14 @@ function getShortId(embedUrl: string): string {
 
 router.post('/extract', authMiddleware, async (req, res) => {
   const { embedUrl, timeout = 30000 } = req.body as ExtractRequest;
-  const startTime = Date.now();
-  const shortId = getShortId(embedUrl);
 
   if (!embedUrl) {
     res.status(400).json({ error: 'embedUrl is required' });
     return;
   }
+
+  const startTime = Date.now();
+  const shortId = getShortId(embedUrl);
 
   const extracted = await extractM3u8(embedUrl, timeout);
   const duration = Date.now() - startTime;
@@ -47,11 +47,9 @@ router.post('/extract', authMiddleware, async (req, res) => {
 
   consola.info(`[Extract] OK ${shortId} (${duration}ms)`);
 
-  const mediaFlowUrl = buildMediaFlowUrl(extracted.url, extracted.headers, extracted.cookies);
-
   res.json({
     success: true,
-    url: mediaFlowUrl,
+    url: extracted.url,
     m3u8Url: extracted.url,
     headers: extracted.headers,
     cookies: extracted.cookies,

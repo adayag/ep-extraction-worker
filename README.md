@@ -6,7 +6,6 @@ A remote m3u8 extraction service using Patchright (stealth Playwright). Designed
 
 - Stealth browser extraction using Patchright
 - Concurrency-limited Chrome pool (configurable)
-- MediaFlow proxy URL wrapping
 - Shared secret authentication
 - Health endpoint for monitoring
 
@@ -53,12 +52,11 @@ Authorization: Bearer <EXTRACTION_SECRET>
 ```json
 {
   "success": true,
-  "data": {
-    "url": "https://mediaflow.proxy/hls/manifest.m3u8?d=...",
-    "headers": {
-      "Referer": "https://embedsite.com/",
-      "Origin": "https://embedsite.com"
-    }
+  "url": "https://cdn.example.com/stream.m3u8",
+  "m3u8Url": "https://cdn.example.com/stream.m3u8",
+  "headers": {
+    "Referer": "https://embedsite.com/",
+    "Origin": "https://embedsite.com"
   }
 }
 ```
@@ -80,9 +78,10 @@ Authorization: Bearer <EXTRACTION_SECRET>
 | `PORT` | `3001` | Server port |
 | `NODE_ENV` | `production` | Environment |
 | `EXTRACTION_SECRET` | (required) | Shared secret for auth |
-| `MEDIAFLOW_PROXY_URL` | (optional) | MediaFlow proxy base URL |
 | `CHROME_PATH` | (auto) | Path to Chrome binary |
 | `MAX_CONCURRENT` | `2` | Max simultaneous Chrome contexts |
+| `BROWSER_IDLE_TIMEOUT` | `60000` | Restart browser after idle (ms) |
+| `BROWSER_MAX_AGE` | `7200000` | Max browser lifetime (ms, 2 hours) |
 
 ### Example .env
 
@@ -90,7 +89,6 @@ Authorization: Bearer <EXTRACTION_SECRET>
 NODE_ENV=production
 PORT=3001
 EXTRACTION_SECRET=your-32-character-secret-here
-MEDIAFLOW_PROXY_URL=https://mediaflow.example.com?api_password=xxx
 CHROME_PATH=/usr/bin/chromium
 MAX_CONCURRENT=2
 ```
@@ -166,6 +164,53 @@ CMD ["node", "dist/index.js"]
 | `MAX_CONCURRENT=1` | 512MB | 1 core | Minimum, slow |
 | `MAX_CONCURRENT=2` | 1GB | 1-2 cores | Recommended |
 | `MAX_CONCURRENT=4` | 2GB | 2+ cores | High throughput |
+
+## Memory Management
+
+The worker implements several strategies to prevent memory leaks and OOM crashes:
+
+### Browser Restart
+
+Chrome accumulates memory over time. The worker automatically restarts the browser:
+
+1. **Idle restart** - After 60 seconds of inactivity (configurable via `BROWSER_IDLE_TIMEOUT`)
+2. **Max-age restart** - After 2 hours regardless of activity (configurable via `BROWSER_MAX_AGE`)
+
+Both restarts only occur when no extractions are in progress. Watch for log messages:
+```
+[BrowserPool] Idle restart (age: 123s)
+[BrowserPool] Max age exceeded (7201s), restarting browser
+```
+
+### Node.js Heap Limit
+
+The Docker image runs with `--max-old-space-size=512` to cap Node.js heap at 512MB. This prevents unbounded growth and forces crashes earlier (recoverable via container restart) rather than consuming all available memory.
+
+### Health Endpoint Memory Stats
+
+The `/health` endpoint includes memory usage for monitoring:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "memory": {
+    "heapUsedMB": 85,
+    "heapTotalMB": 120,
+    "rssMB": 450
+  }
+}
+```
+
+Monitor `heapUsedMB` over time. Expected stable usage: 80-150MB. If heap consistently grows above 300MB, the idle restart may not be firing correctly.
+
+### Troubleshooting Memory Issues
+
+1. **Heap keeps growing**: Check logs for `[BrowserPool] Idle restart` messages. If missing after periods of inactivity, the timer may not be scheduling correctly.
+
+2. **OOM crashes**: Lower `MAX_CONCURRENT` to reduce peak memory usage. Each context uses 150-300MB.
+
+3. **Browser not restarting**: Ensure no stuck extractions. Check `BROWSER_IDLE_TIMEOUT` value. Default 60 seconds should trigger after a minute of no requests.
 
 ## Testing
 

@@ -2,18 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-// Mock extractor and mediaflow before importing route
+// Mock extractor before importing route
 vi.mock('../extractor.js', () => ({
   extractM3u8: vi.fn(),
 }));
 
-vi.mock('../mediaflow.js', () => ({
-  buildMediaFlowUrl: vi.fn(),
-}));
-
 import extractRouter from './extract.js';
 import { extractM3u8 } from '../extractor.js';
-import { buildMediaFlowUrl } from '../mediaflow.js';
 
 describe('POST /extract', () => {
   let app: express.Application;
@@ -62,12 +57,11 @@ describe('POST /extract', () => {
     expect(res.body.error).toContain('embedUrl');
   });
 
-  it('should return MediaFlow URL on successful extraction', async () => {
+  it('should return raw m3u8 URL on successful extraction', async () => {
     vi.mocked(extractM3u8).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: { Referer: 'https://embed.example.com/' },
     });
-    vi.mocked(buildMediaFlowUrl).mockReturnValue('https://proxy.example.com/proxy/hls/manifest.m3u8?d=...');
 
     const res = await request(app)
       .post('/extract')
@@ -76,7 +70,7 @@ describe('POST /extract', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.url).toBe('https://proxy.example.com/proxy/hls/manifest.m3u8?d=...');
+    expect(res.body.url).toBe('https://cdn.example.com/stream.m3u8');
     expect(res.body.m3u8Url).toBe('https://cdn.example.com/stream.m3u8');
     expect(res.body.headers).toEqual({ Referer: 'https://embed.example.com/' });
   });
@@ -99,7 +93,6 @@ describe('POST /extract', () => {
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
-    vi.mocked(buildMediaFlowUrl).mockReturnValue('https://proxy.example.com/...');
 
     await request(app)
       .post('/extract')
@@ -114,7 +107,6 @@ describe('POST /extract', () => {
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
-    vi.mocked(buildMediaFlowUrl).mockReturnValue('https://proxy.example.com/...');
 
     await request(app)
       .post('/extract')
