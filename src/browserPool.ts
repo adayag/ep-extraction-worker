@@ -76,6 +76,18 @@ class BrowserPool {
         // Process limit flags (reduce memory by sharing renderer)
         '--renderer-process-limit=1',
         '--disable-features=IsolateOrigins,site-per-process',
+        // Graphics optimizations (video embeds don't need 3D)
+        '--disable-webgl',
+        '--disable-webgl2',
+        '--disable-3d-apis',
+        '--disable-canvas-aa',
+        // Keep extraction responsive (don't throttle timers/renderer)
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        // Reduce background CPU work
+        '--disable-component-update',
+        '--disable-domain-reliability',
+        '--disable-client-side-phishing-detection',
       ],
     });
 
