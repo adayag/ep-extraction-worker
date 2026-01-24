@@ -59,6 +59,9 @@ class BrowserPool {
         '--disable-software-rasterizer',
         '--disable-accelerated-2d-canvas',
         '--mute-audio',
+        // Process limit flags (reduce memory by sharing renderer)
+        '--renderer-process-limit=1',
+        '--disable-features=IsolateOrigins,site-per-process',
       ],
     });
 

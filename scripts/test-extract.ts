@@ -20,6 +20,57 @@ import { chromium } from 'patchright';
 import type { Browser, BrowserContext, Frame } from 'patchright';
 import * as readline from 'readline';
 import * as fs from 'fs';
+import { execSync } from 'child_process';
+
+// ============================================================================
+// Memory Tracking
+// ============================================================================
+
+interface MemoryStats {
+  samples: number[];
+  peak: number;
+  baseline: number;
+}
+
+function getChromeMemoryMB(): number {
+  try {
+    const platform = process.platform;
+    let cmd: string;
+
+    if (platform === 'darwin') {
+      // macOS: All Chrome processes (we'll subtract baseline)
+      cmd = `ps aux | grep -E "Google Chrome" | grep -v grep | awk '{sum+=$6} END {print sum/1024}'`;
+    } else {
+      // Linux: chrome/chromium processes
+      cmd = `ps aux | grep -E "[c]hrome|[c]hromium" | awk '{sum+=$6} END {print sum/1024}'`;
+    }
+
+    const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
+    return parseFloat(output.trim()) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function startMemoryMonitor(intervalMs: number = 500, baseline: number = 0): { stats: MemoryStats; stop: () => void } {
+  const stats: MemoryStats = { samples: [], peak: 0, baseline };
+
+  const interval = setInterval(() => {
+    const mem = getChromeMemoryMB();
+    const delta = Math.max(0, mem - baseline);
+    if (delta > 0) {
+      stats.samples.push(delta);
+      if (delta > stats.peak) {
+        stats.peak = delta;
+      }
+    }
+  }, intervalMs);
+
+  return {
+    stats,
+    stop: () => clearInterval(interval),
+  };
+}
 
 // ============================================================================
 // Configuration
@@ -337,7 +388,7 @@ function printResult(result: ExtractionResult, index: number, total: number): vo
   }
 }
 
-function printSummary(results: ExtractionResult[]): void {
+function printSummary(results: ExtractionResult[], memoryStats?: MemoryStats): void {
   const successful = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
   const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / results.length / 1000;
@@ -351,6 +402,17 @@ function printSummary(results: ExtractionResult[]): void {
   console.log(`Success Rate: ${((successful / results.length) * 100).toFixed(1)}%`);
   console.log(`Avg Duration: ${avgDuration.toFixed(2)}s`);
   console.log(`Blocked Requests: ${totalBlocked}/${totalRequests} (${((totalBlocked / totalRequests) * 100).toFixed(1)}%)`);
+
+  if (memoryStats && memoryStats.samples.length > 0) {
+    const avgMemory = memoryStats.samples.reduce((a, b) => a + b, 0) / memoryStats.samples.length;
+    console.log('\n' + '-'.repeat(60));
+    console.log('MEMORY (Test Chrome - delta from baseline)');
+    console.log('-'.repeat(60));
+    console.log(`Baseline:    ${memoryStats.baseline.toFixed(1)} MB (your browser)`);
+    console.log(`Peak Delta:  ${memoryStats.peak.toFixed(1)} MB`);
+    console.log(`Avg Delta:   ${avgMemory.toFixed(1)} MB`);
+    console.log(`Samples:     ${memoryStats.samples.length}`);
+  }
 
   if (failed > 0) {
     console.log('\nFailed URLs:');
@@ -474,8 +536,12 @@ Examples:
     console.log(`   Concurrent: ${config.concurrent}`);
   }
 
+  // Capture baseline Chrome memory (user's browser)
+  const baselineMemory = getChromeMemoryMB();
+  console.log(`\n📊 Baseline Chrome memory: ${baselineMemory.toFixed(1)} MB`);
+
   // Launch browser
-  console.log('\n⏳ Launching browser...');
+  console.log('⏳ Launching browser...');
   const browser = await chromium.launch({
     channel: 'chrome',
     headless: true,
@@ -499,9 +565,14 @@ Examples:
   });
   console.log('✓ Browser launched');
 
+  // Start memory monitoring (with baseline subtraction)
+  const memoryMonitor = startMemoryMonitor(250, baselineMemory);
+  console.log('✓ Memory monitor started (tracking delta from baseline)');
+
   try {
     if (interactive) {
       await runInteractiveMode(browser, config);
+      memoryMonitor.stop();
     } else {
       // Expand URLs by repeat count
       const expandedUrls = urls.flatMap((url) => Array(config.repeat).fill(url));
@@ -522,7 +593,8 @@ Examples:
         }
       }
 
-      printSummary(results);
+      memoryMonitor.stop();
+      printSummary(results, memoryMonitor.stats);
     }
   } finally {
     console.log('\n⏳ Closing browser...');
