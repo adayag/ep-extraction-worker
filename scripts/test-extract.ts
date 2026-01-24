@@ -81,6 +81,7 @@ interface TestConfig {
   verbose: boolean;
   repeat: number;
   concurrent: number;
+  closePopups: boolean;
 }
 
 const defaultConfig: TestConfig = {
@@ -88,6 +89,7 @@ const defaultConfig: TestConfig = {
   verbose: false,
   repeat: 1,
   concurrent: 1,
+  closePopups: false,
 };
 
 // ============================================================================
@@ -118,7 +120,10 @@ const BLOCK_PATTERNS = [
   /\.(mp4|webm)(\?|$)/i,
 ];
 
-const PLAYER_DOMAINS = ['player', 'jwplayer', 'plyr', 'video', 'embed', 'hls', 'dash', 'stream'];
+// Single regex for player domain detection (more efficient than array iteration)
+const PLAYER_DOMAIN_REGEX = /player|jwplayer|plyr|video|embed|hls|dash|stream/i;
+
+// Telemetry patterns for XHR/Fetch blocking
 const TELEMETRY_PATTERN = /analytics|tracking|beacon|metrics|telemetry|collect|log|event/i;
 
 const playSelectors = [
@@ -177,6 +182,8 @@ async function extractM3u8(
   let totalRequests = 0;
   let context: BrowserContext | null = null;
 
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
   try {
     context = await browser.newContext({
       userAgent:
@@ -189,6 +196,20 @@ async function extractM3u8(
       hasTouch: false,
       isMobile: false,
     });
+
+    // Handle popups based on config
+    if (config.closePopups) {
+      // BROKEN behavior (v1.3.0): Close popups immediately - breaks embedsports.top
+      context.on('page', async (page) => {
+        if (config.verbose) console.log('  ⚠ Closing popup (--close-popups mode)');
+        await page.close().catch(() => {});
+      });
+    } else {
+      // FIXED behavior (v1.2.1): Don't close popups - some embeds need them
+      context.on('page', () => {
+        if (config.verbose) console.log('  ℹ Popup opened (not blocking)');
+      });
+    }
 
     let m3u8Url: string | null = null;
     let m3u8Referer: string | null = null;
@@ -215,6 +236,12 @@ async function extractM3u8(
 
         m3u8Url = url;
         resolved = true;
+
+        // Clear timeout since we found m3u8
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
 
         const headers = route.request().headers();
         m3u8Referer = headers['referer'] || null;
@@ -257,25 +284,27 @@ async function extractM3u8(
         return;
       }
 
+      // Block images, fonts, and stylesheets by resource type
       if (['image', 'font', 'stylesheet'].includes(resourceType)) {
         blockedRequests++;
         await route.abort();
         return;
       }
 
+      // Check URL against block patterns once (consolidated)
+      const shouldBlock = BLOCK_PATTERNS.some((pattern) => pattern.test(url));
+
+      // Block non-player scripts that match block patterns
       if (resourceType === 'script') {
-        const isPlayerScript = PLAYER_DOMAINS.some((d) => url.toLowerCase().includes(d));
-        if (!isPlayerScript) {
-          for (const pattern of BLOCK_PATTERNS) {
-            if (pattern.test(url)) {
-              blockedRequests++;
-              await route.abort();
-              return;
-            }
-          }
+        const isPlayerScript = PLAYER_DOMAIN_REGEX.test(url);
+        if (!isPlayerScript && shouldBlock) {
+          blockedRequests++;
+          await route.abort();
+          return;
         }
       }
 
+      // Block telemetry XHR/Fetch requests
       if (['xhr', 'fetch'].includes(resourceType)) {
         if (TELEMETRY_PATTERN.test(url)) {
           blockedRequests++;
@@ -284,19 +313,18 @@ async function extractM3u8(
         }
       }
 
-      for (const pattern of BLOCK_PATTERNS) {
-        if (pattern.test(url)) {
-          blockedRequests++;
-          await route.abort();
-          return;
-        }
+      // Block by URL patterns (already computed)
+      if (shouldBlock) {
+        blockedRequests++;
+        await route.abort();
+        return;
       }
 
       await route.continue();
     });
 
-    // Timeout handler
-    setTimeout(() => {
+    // Timeout handler with memory leak fix
+    timeoutId = setTimeout(() => {
       if (!resolved) {
         resolved = true;
         resolvePromise(null);
@@ -310,22 +338,23 @@ async function extractM3u8(
     }
 
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(2000).catch(() => {});
 
+    // Wait for page to settle (reduced from 2000ms)
+    await page.waitForTimeout(500).catch(() => {});
+
+    // Try clicking play on main page
     if (!resolved) {
       if (config.verbose) console.log(`  → Trying play buttons on main frame...`);
       await tryClickInFrame(page.mainFrame(), config.verbose);
-      await page.waitForTimeout(1000).catch(() => {});
+      await page.waitForTimeout(500).catch(() => {});
     }
 
+    // Try clicking play in iframes (parallelized)
     if (!resolved) {
-      const frames = page.frames();
-      if (config.verbose) console.log(`  → Checking ${frames.length - 1} iframes...`);
-      for (const frame of frames) {
-        if (resolved) break;
-        if (frame === page.mainFrame()) continue;
-        await tryClickInFrame(frame, config.verbose);
-        await page.waitForTimeout(500).catch(() => {});
+      const frames = page.frames().filter((f) => f !== page.mainFrame());
+      if (frames.length > 0) {
+        if (config.verbose) console.log(`  → Checking ${frames.length} iframes (in parallel)...`);
+        await Promise.all(frames.map((frame) => tryClickInFrame(frame, config.verbose).catch(() => {})));
       }
     }
 
@@ -362,7 +391,19 @@ async function extractM3u8(
       totalRequests,
     };
   } finally {
-    if (context) await context.close().catch(() => {});
+    // Clear timeout to prevent memory leak
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    if (context) {
+      // Clean up route handlers to release closures
+      await context.unroute('**/*').catch(() => {});
+      // Close all pages explicitly
+      const pages = context.pages();
+      await Promise.all(pages.map((p) => p.close().catch(() => {})));
+      // Then close context
+      await context.close().catch(() => {});
+    }
   }
 }
 
@@ -486,6 +527,8 @@ async function main(): Promise<void> {
       urlFile = args[++i];
     } else if (arg === '--interactive' || arg === '-i') {
       interactive = true;
+    } else if (arg === '--close-popups') {
+      config.closePopups = true;
     } else if (arg === '--help' || arg === '-h') {
       console.log(`
 Usage: npx tsx scripts/test-extract.ts [options] <url1> [url2] ...
@@ -497,6 +540,7 @@ Options:
   --interactive, -i  Interactive mode - enter URLs one at a time
   --repeat <n>       Repeat each extraction n times
   --concurrent <n>   Run n extractions concurrently
+  --close-popups     Close popup pages immediately (broken v1.3.0 behavior)
   --help, -h         Show this help
 
 Examples:
@@ -504,6 +548,10 @@ Examples:
   npx tsx scripts/test-extract.ts --verbose --timeout 45000 https://example.com/embed/123
   npx tsx scripts/test-extract.ts --file urls.txt
   npx tsx scripts/test-extract.ts --interactive
+
+  # Test broken vs fixed popup handling:
+  npx tsx scripts/test-extract.ts --verbose "<url>"                # Fixed (popups allowed)
+  npx tsx scripts/test-extract.ts --verbose "<url>" --close-popups # Broken (popups closed)
 `);
       process.exit(0);
     } else if (arg.startsWith('http')) {
@@ -530,6 +578,7 @@ Examples:
   console.log('🚀 EP Extraction Worker Test Script');
   console.log(`   Timeout: ${config.timeout}ms`);
   console.log(`   Verbose: ${config.verbose}`);
+  console.log(`   Close Popups: ${config.closePopups}${config.closePopups ? ' (⚠ broken behavior)' : ' (✓ fixed behavior)'}`);
   if (!interactive) {
     console.log(`   URLs: ${urls.length}`);
     console.log(`   Repeat: ${config.repeat}x`);

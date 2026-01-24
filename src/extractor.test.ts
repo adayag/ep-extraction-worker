@@ -264,7 +264,7 @@ describe('extractor', () => {
       expect(pageCloseOrder).toBeLessThan(contextCloseOrder);
     });
 
-    it('should close popup pages immediately', async () => {
+    it('should not close popup pages (closing breaks some embeds)', async () => {
       const mockContext = getMockContext();
       let pageHandler: ((page: unknown) => void) | null = null;
 
@@ -290,7 +290,8 @@ describe('extractor', () => {
 
       await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
 
-      expect(mockPopup.close).toHaveBeenCalled();
+      // Popups should NOT be closed - closing them breaks embeds like embedsports.top
+      expect(mockPopup.close).not.toHaveBeenCalled();
     });
   });
 });

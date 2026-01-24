@@ -84,10 +84,9 @@ async function doExtraction(
   try {
     context = await browserPool.createContext();
 
-    // Close popup pages immediately to prevent memory accumulation
-    context.on('page', async (page) => {
-      consola.debug('[Extractor] Closing popup');
-      await page.close().catch(() => {});
+    // Don't block popups - closing them breaks the main page
+    context.on('page', () => {
+      consola.debug('[Extractor] Popup opened (not blocking)');
     });
 
     let resolved = false;
