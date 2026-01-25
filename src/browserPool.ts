@@ -7,6 +7,10 @@ const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
 const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT || '60000', 10); // 60 seconds
 const MAX_AGE_MS = parseInt(process.env.BROWSER_MAX_AGE || '7200000', 10); // 2 hours
 
+// Circuit breaker settings
+const CIRCUIT_BREAKER_THRESHOLD = 3; // failures before opening circuit
+const CIRCUIT_BREAKER_RESET_MS = 30000; // 30 seconds before retry
+
 class BrowserPool {
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
@@ -15,7 +19,17 @@ class BrowserPool {
   private launchTime: number = 0;
   private activeCount = 0;
 
+  // Circuit breaker state
+  private consecutiveFailures = 0;
+  private circuitOpenUntil: number = 0;
+
   async getBrowser(): Promise<Browser> {
+    // Check circuit breaker - throw if open
+    if (this.isCircuitOpen()) {
+      const waitTime = Math.ceil((this.circuitOpenUntil - Date.now()) / 1000);
+      throw new Error(`Circuit breaker open, retry in ${waitTime}s`);
+    }
+
     // Check if existing browser is still connected
     if (this.browser) {
       if (this.browser.isConnected()) {
@@ -39,13 +53,45 @@ class BrowserPool {
       return this.launching;
     }
 
-    this.launching = this.launchBrowser();
+    this.launching = this.launchBrowserWithCircuitBreaker();
     try {
       this.browser = await this.launching;
       return this.browser;
     } finally {
       this.launching = null;
     }
+  }
+
+  private isCircuitOpen(): boolean {
+    return this.circuitOpenUntil > Date.now();
+  }
+
+  private async launchBrowserWithCircuitBreaker(): Promise<Browser> {
+    try {
+      const browser = await this.launchBrowser();
+      // Success - reset circuit breaker
+      this.consecutiveFailures = 0;
+      this.circuitOpenUntil = 0;
+      return browser;
+    } catch (error) {
+      // Failure - increment and possibly open circuit
+      this.consecutiveFailures++;
+      consola.error(`[BrowserPool] Launch failed (${this.consecutiveFailures}/${CIRCUIT_BREAKER_THRESHOLD}):`, error);
+
+      if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        this.circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_RESET_MS;
+        consola.error(`[BrowserPool] Circuit breaker OPEN for ${CIRCUIT_BREAKER_RESET_MS / 1000}s`);
+      }
+      throw error;
+    }
+  }
+
+  getStatus(): { isCircuitOpen: boolean; consecutiveFailures: number; circuitOpenUntil: number } {
+    return {
+      isCircuitOpen: this.isCircuitOpen(),
+      consecutiveFailures: this.consecutiveFailures,
+      circuitOpenUntil: this.circuitOpenUntil,
+    };
   }
 
   private async launchBrowser(): Promise<Browser> {

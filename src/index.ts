@@ -6,6 +6,8 @@ import { browserPool } from './browserPool.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const CIRCUIT_BREAKER_EXIT_THRESHOLD = parseInt(process.env.CIRCUIT_BREAKER_EXIT_THRESHOLD || '120000', 10);
+const WATCHDOG_INTERVAL = 10000; // Check every 10 seconds
 
 // Middleware
 app.use(express.json());
@@ -14,16 +16,52 @@ app.use(express.json());
 app.use('/', healthRouter);
 app.use('/', extractRouter);
 
+// Track when circuit first opened for watchdog
+let circuitOpenSince: number | null = null;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+function startWatchdog(): void {
+  watchdogTimer = setInterval(() => {
+    const status = browserPool.getStatus();
+
+    if (status.isCircuitOpen) {
+      if (circuitOpenSince === null) {
+        circuitOpenSince = Date.now();
+        consola.warn('[Watchdog] Circuit breaker opened, monitoring...');
+      }
+
+      const openDuration = Date.now() - circuitOpenSince;
+      if (openDuration >= CIRCUIT_BREAKER_EXIT_THRESHOLD) {
+        consola.error(`[Watchdog] Circuit open for ${Math.round(openDuration / 1000)}s, exceeds threshold of ${CIRCUIT_BREAKER_EXIT_THRESHOLD / 1000}s`);
+        consola.error('[Watchdog] Exiting process for container restart...');
+        process.exit(1);
+      }
+    } else {
+      // Circuit recovered, reset tracking
+      if (circuitOpenSince !== null) {
+        consola.info('[Watchdog] Circuit breaker recovered');
+        circuitOpenSince = null;
+      }
+    }
+  }, WATCHDOG_INTERVAL);
+}
+
 // Start server
 const server = app.listen(PORT, () => {
   consola.info(`[ExtractionWorker] Server running on port ${PORT}`);
   consola.info(`[ExtractionWorker] Health: http://localhost:${PORT}/health`);
   consola.info(`[ExtractionWorker] Extract: POST http://localhost:${PORT}/extract`);
+  consola.info(`[ExtractionWorker] Watchdog exit threshold: ${CIRCUIT_BREAKER_EXIT_THRESHOLD / 1000}s`);
+  startWatchdog();
 });
 
 // Graceful shutdown handler
 async function shutdown(signal: string): Promise<void> {
   consola.info(`[ExtractionWorker] Received ${signal}, shutting down gracefully...`);
+
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+  }
 
   server.close(() => {
     consola.info('[ExtractionWorker] HTTP server closed');
