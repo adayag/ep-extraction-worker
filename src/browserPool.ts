@@ -1,7 +1,7 @@
 import { chromium } from 'patchright';
 import type { Browser, BrowserContext } from 'patchright';
 import consola from 'consola';
-import pLimit from 'p-limit';
+import PQueue from 'p-queue';
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
 const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT || '60000', 10); // 60 seconds
@@ -14,7 +14,7 @@ const CIRCUIT_BREAKER_RESET_MS = 30000; // 30 seconds before retry
 class BrowserPool {
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
-  private limiter = pLimit(MAX_CONCURRENT);
+  private queue = new PQueue({ concurrency: MAX_CONCURRENT });
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private launchTime: number = 0;
   private activeCount = 0;
@@ -167,10 +167,12 @@ class BrowserPool {
   }
 
   /**
-   * Run an extraction function with concurrency limiting
+   * Run an extraction function with concurrency limiting and priority support
+   * @param fn - The async function to execute
+   * @param priority - Priority level (0-10, higher runs first). Default: 0
    */
-  async withLimit<T>(fn: () => Promise<T>): Promise<T> {
-    return this.limiter(async () => {
+  async withLimit<T>(fn: () => Promise<T>, priority = 0): Promise<T> {
+    const result = await this.queue.add(async () => {
       // Clear idle timer when extraction starts
       this.clearIdleTimer();
       this.activeCount++;
@@ -184,7 +186,23 @@ class BrowserPool {
           this.scheduleIdleRestart();
         }
       }
-    });
+    }, { priority });
+
+    return result as T;
+  }
+
+  /**
+   * Get the number of pending items in the queue
+   */
+  getQueueSize(): number {
+    return this.queue.size;
+  }
+
+  /**
+   * Get the number of currently running tasks
+   */
+  getActiveCount(): number {
+    return this.activeCount;
   }
 
   private clearIdleTimer(): void {

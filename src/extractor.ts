@@ -255,8 +255,9 @@ async function doExtraction(
 
 export async function extractM3u8(
   embedUrl: string,
-  timeout: number = 15000
+  timeout: number = 15000,
+  priority: number = 0
 ): Promise<ExtractedStream | null> {
-  // Run with concurrency limiting
-  return browserPool.withLimit(() => doExtraction(embedUrl, timeout));
+  // Run with concurrency limiting and priority
+  return browserPool.withLimit(() => doExtraction(embedUrl, timeout), priority);
 }

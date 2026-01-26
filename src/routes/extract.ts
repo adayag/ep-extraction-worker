@@ -8,7 +8,14 @@ const router = Router();
 interface ExtractRequest {
   embedUrl: string;
   timeout?: number;
+  priority?: 'high' | 'normal';
 }
+
+// Priority levels: higher number = executes first
+const PRIORITY_LEVELS = {
+  normal: 0,
+  high: 10,
+} as const;
 
 // Extract a short identifier from embed URL for logging
 function getShortId(embedUrl: string): string {
@@ -23,7 +30,7 @@ function getShortId(embedUrl: string): string {
 }
 
 router.post('/extract', authMiddleware, async (req, res) => {
-  const { embedUrl, timeout = 30000 } = req.body as ExtractRequest;
+  const { embedUrl, timeout = 30000, priority: priorityParam } = req.body as ExtractRequest;
 
   if (!embedUrl) {
     res.status(400).json({ error: 'embedUrl is required' });
@@ -32,8 +39,11 @@ router.post('/extract', authMiddleware, async (req, res) => {
 
   const startTime = Date.now();
   const shortId = getShortId(embedUrl);
+  const priority = PRIORITY_LEVELS[priorityParam ?? 'normal'] ?? PRIORITY_LEVELS.normal;
+  const priorityLabel = priority > 0 ? 'HIGH' : 'normal';
 
-  const extracted = await extractM3u8(embedUrl, timeout);
+  consola.info(`[Extract] QUEUED ${shortId} (priority: ${priorityLabel})`);
+  const extracted = await extractM3u8(embedUrl, timeout, priority);
   const duration = Date.now() - startTime;
 
   if (!extracted) {

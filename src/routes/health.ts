@@ -16,6 +16,10 @@ router.get('/health', (_req, res) => {
       heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
       rssMB: Math.round(mem.rss / 1024 / 1024),
     },
+    queue: {
+      pending: browserPool.getQueueSize(),
+      active: browserPool.getActiveCount(),
+    },
     browser: {
       circuitBreaker: browserStatus,
     },

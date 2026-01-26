@@ -43,10 +43,17 @@ Content-Type: application/json
 Authorization: Bearer <EXTRACTION_SECRET>
 
 {
-  "url": "https://embedsite.com/embed/admin/123",
-  "timeout": 15000
+  "embedUrl": "https://embedsite.com/embed/admin/123",
+  "timeout": 15000,
+  "priority": "high"
 }
 ```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `embedUrl` | Yes | - | The embed page URL to extract from |
+| `timeout` | No | 30000 | Extraction timeout in ms |
+| `priority` | No | `"normal"` | `"high"` jumps queue, `"normal"` is FIFO |
 
 **Response (success):**
 ```json
@@ -103,7 +110,7 @@ MAX_CONCURRENT=2
 │  POST /extract ─► Auth Check ─► Browser Pool   │
 │                                    │           │
 │                         ┌──────────┴───────────┐
-│                         │   p-limit queue      │
+│                         │   p-queue (priority) │
 │                         │   (MAX_CONCURRENT)   │
 │                         └──────────┬───────────┘
 │                                    │           │

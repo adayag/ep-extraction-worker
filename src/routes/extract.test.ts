@@ -99,7 +99,7 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', timeout: 15000 });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 15000);
+    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 15000, 0);
   });
 
   it('should use default timeout when not specified', async () => {
@@ -113,6 +113,48 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000);
+    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
+  });
+
+  it('should pass high priority (10) when priority is "high"', async () => {
+    vi.mocked(extractM3u8).mockResolvedValue({
+      url: 'https://cdn.example.com/stream.m3u8',
+      headers: {},
+    });
+
+    await request(app)
+      .post('/extract')
+      .set('Authorization', `Bearer ${TEST_SECRET}`)
+      .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'high' });
+
+    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 10);
+  });
+
+  it('should pass normal priority (0) when priority is "normal"', async () => {
+    vi.mocked(extractM3u8).mockResolvedValue({
+      url: 'https://cdn.example.com/stream.m3u8',
+      headers: {},
+    });
+
+    await request(app)
+      .post('/extract')
+      .set('Authorization', `Bearer ${TEST_SECRET}`)
+      .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'normal' });
+
+    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
+  });
+
+  it('should treat invalid priority as normal (0)', async () => {
+    vi.mocked(extractM3u8).mockResolvedValue({
+      url: 'https://cdn.example.com/stream.m3u8',
+      headers: {},
+    });
+
+    await request(app)
+      .post('/extract')
+      .set('Authorization', `Bearer ${TEST_SECRET}`)
+      .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'invalid' });
+
+    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
   });
 });
