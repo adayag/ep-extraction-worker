@@ -35,10 +35,18 @@ export const browserRestarts = new Counter({
 });
 
 // --- Performance ---
+// Error type constants for consistent labeling
+export const ERROR_TYPES = {
+  none: 'none',
+  timeout: 'timeout',
+  circuit_open: 'circuit_open',
+  browser_error: 'browser_error',
+} as const;
+
 export const extractionsTotal = new Counter({
   name: 'extraction_worker_extractions_total',
   help: 'Total extractions',
-  labelNames: ['status'] as const,
+  labelNames: ['status', 'error_type'] as const,
   registers: [register],
 });
 
@@ -60,5 +68,40 @@ export const queueDepth = new Gauge({
 export const activeExtractions = new Gauge({
   name: 'extraction_worker_active_extractions',
   help: 'Number of extractions currently running',
+  registers: [register],
+});
+
+// --- Circuit Breaker & Browser Health ---
+export const circuitBreakerTrips = new Counter({
+  name: 'extraction_worker_circuit_breaker_trips_total',
+  help: 'Total circuit breaker trips (when circuit opens)',
+  registers: [register],
+});
+
+export const browserDisconnects = new Counter({
+  name: 'extraction_worker_browser_disconnects_total',
+  help: 'Total unexpected browser disconnections',
+  registers: [register],
+});
+
+// --- Performance Breakdown ---
+export const queueWaitTime = new Histogram({
+  name: 'extraction_worker_queue_wait_seconds',
+  help: 'Time waiting in queue before execution starts',
+  buckets: [0.01, 0.1, 0.5, 1, 2, 5, 10, 30],
+  registers: [register],
+});
+
+export const contextCreationTime = new Histogram({
+  name: 'extraction_worker_context_creation_seconds',
+  help: 'Time to create browser context',
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2],
+  registers: [register],
+});
+
+export const m3u8DetectionTime = new Histogram({
+  name: 'extraction_worker_m3u8_detection_seconds',
+  help: 'Time from page navigation start to m3u8 intercept',
+  buckets: [0.5, 1, 2, 5, 10, 15, 30, 60],
   registers: [register],
 });

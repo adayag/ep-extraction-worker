@@ -2,7 +2,7 @@ import { Router } from 'express';
 import consola from 'consola';
 import { authMiddleware } from '../middleware/auth.js';
 import { extractM3u8 } from '../extractor.js';
-import { extractionsTotal, extractionDuration } from '../metrics.js';
+import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
 const router = Router();
 
@@ -38,38 +38,59 @@ router.post('/extract', authMiddleware, async (req, res) => {
     return;
   }
 
-  const startTime = Date.now();
+  const queueEnqueueTime = Date.now();
   const shortId = getShortId(embedUrl);
   const priority = PRIORITY_LEVELS[priorityParam ?? 'normal'] ?? PRIORITY_LEVELS.normal;
   const priorityLabel = priority > 0 ? 'HIGH' : 'normal';
 
   consola.info(`[Extract] QUEUED ${shortId} (priority: ${priorityLabel})`);
-  const extracted = await extractM3u8(embedUrl, timeout, priority);
-  const duration = Date.now() - startTime;
-  const durationSeconds = duration / 1000;
 
-  if (!extracted) {
-    consola.warn(`[Extract] FAILED ${shortId} (${duration}ms)`);
-    extractionsTotal.inc({ status: 'failure' });
-    extractionDuration.observe({ status: 'failure' }, durationSeconds);
+  try {
+    const extracted = await extractM3u8(embedUrl, timeout, priority, queueEnqueueTime);
+    const duration = Date.now() - queueEnqueueTime;
+    const durationSeconds = duration / 1000;
+
+    if (!extracted) {
+      consola.warn(`[Extract] FAILED ${shortId} (${duration}ms) - timeout`);
+      extractionsTotal.inc({ status: 'failure', error_type: ERROR_TYPES.timeout });
+      extractionDuration.observe({ status: 'failure' }, durationSeconds);
+      res.json({
+        success: false,
+        error: 'm3u8 extraction failed',
+      });
+      return;
+    }
+
+    consola.info(`[Extract] OK ${shortId} (${duration}ms)`);
+    extractionsTotal.inc({ status: 'success', error_type: ERROR_TYPES.none });
+    extractionDuration.observe({ status: 'success' }, durationSeconds);
+
     res.json({
-      success: false,
-      error: 'm3u8 extraction failed',
+      success: true,
+      url: extracted.url,
+      m3u8Url: extracted.url,
+      headers: extracted.headers,
+      cookies: extracted.cookies,
     });
-    return;
+  } catch (error: unknown) {
+    const duration = Date.now() - queueEnqueueTime;
+    const durationSeconds = duration / 1000;
+
+    // Classify error type
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorType = errorMessage.includes('Circuit breaker')
+      ? ERROR_TYPES.circuit_open
+      : ERROR_TYPES.browser_error;
+
+    consola.error(`[Extract] ERROR ${shortId} (${duration}ms) - ${errorType}:`, error);
+    extractionsTotal.inc({ status: 'failure', error_type: errorType });
+    extractionDuration.observe({ status: 'failure' }, durationSeconds);
+
+    res.status(503).json({
+      success: false,
+      error: errorMessage,
+    });
   }
-
-  consola.info(`[Extract] OK ${shortId} (${duration}ms)`);
-  extractionsTotal.inc({ status: 'success' });
-  extractionDuration.observe({ status: 'success' }, durationSeconds);
-
-  res.json({
-    success: true,
-    url: extracted.url,
-    m3u8Url: extracted.url,
-    headers: extracted.headers,
-    cookies: extracted.cookies,
-  });
 });
 
 export default router;

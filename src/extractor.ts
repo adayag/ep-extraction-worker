@@ -1,6 +1,7 @@
 import type { BrowserContext, Frame } from 'patchright';
 import consola from 'consola';
 import { browserPool } from './browserPool.js';
+import { contextCreationTime, m3u8DetectionTime } from './metrics.js';
 
 // Cached patterns for performance (compiled once at module load)
 const BLOCK_PATTERNS = [
@@ -80,9 +81,15 @@ async function doExtraction(
 
   let context: BrowserContext | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  // Track navigation start time for m3u8 detection metric (mutable for route handler closure)
+  let navigationStartTime = 0;
 
   try {
+    // Track context creation time
+    const contextStartTime = Date.now();
     context = await browserPool.createContext();
+    const contextDurationSeconds = (Date.now() - contextStartTime) / 1000;
+    contextCreationTime.observe(contextDurationSeconds);
 
     // Don't block popups - closing them breaks the main page
     context.on('page', () => {
@@ -110,6 +117,12 @@ async function doExtraction(
           return;
         }
         resolved = true; // Set immediately before any async operations
+
+        // Track m3u8 detection time (from navigation start)
+        if (navigationStartTime > 0) {
+          const detectionSeconds = (Date.now() - navigationStartTime) / 1000;
+          m3u8DetectionTime.observe(detectionSeconds);
+        }
 
         // Clear timeout since we found m3u8
         if (timeoutId) {
@@ -210,7 +223,8 @@ async function doExtraction(
 
     const page = await context.newPage();
 
-    // Navigate
+    // Track navigation start time for m3u8 detection metric (set before goto in case goto fails)
+    navigationStartTime = Date.now();
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
 
     // Wait for page to settle (reduced from 2000ms)
@@ -256,8 +270,9 @@ async function doExtraction(
 export async function extractM3u8(
   embedUrl: string,
   timeout: number = 15000,
-  priority: number = 0
+  priority: number = 0,
+  queueEnqueueTime?: number
 ): Promise<ExtractedStream | null> {
   // Run with concurrency limiting and priority
-  return browserPool.withLimit(() => doExtraction(embedUrl, timeout), priority);
+  return browserPool.withLimit(() => doExtraction(embedUrl, timeout), priority, queueEnqueueTime);
 }

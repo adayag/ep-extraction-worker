@@ -9,6 +9,9 @@ import {
   circuitBreakerOpen,
   queueDepth,
   activeExtractions,
+  circuitBreakerTrips,
+  browserDisconnects,
+  queueWaitTime,
 } from './metrics.js';
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
@@ -92,6 +95,7 @@ class BrowserPool {
       if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
         this.circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_RESET_MS;
         circuitBreakerOpen.set(1);
+        circuitBreakerTrips.inc();
         consola.error(`[BrowserPool] Circuit breaker OPEN for ${CIRCUIT_BREAKER_RESET_MS / 1000}s`);
       }
       throw error;
@@ -152,6 +156,7 @@ class BrowserPool {
     // Handle browser disconnect/crash - clear reference so next request relaunches
     browser.on('disconnected', () => {
       consola.warn('[BrowserPool] Browser disconnected unexpectedly');
+      browserDisconnects.inc();
       if (this.browser === browser) {
         this.browser = null;
       }
@@ -183,9 +188,16 @@ class BrowserPool {
    * Run an extraction function with concurrency limiting and priority support
    * @param fn - The async function to execute
    * @param priority - Priority level (0-10, higher runs first). Default: 0
+   * @param queueEnqueueTime - Timestamp when request was queued (for wait time tracking)
    */
-  async withLimit<T>(fn: () => Promise<T>, priority = 0): Promise<T> {
+  async withLimit<T>(fn: () => Promise<T>, priority = 0, queueEnqueueTime?: number): Promise<T> {
     const result = await this.queue.add(async () => {
+      // Track queue wait time if enqueue time provided
+      if (queueEnqueueTime !== undefined) {
+        const waitSeconds = (Date.now() - queueEnqueueTime) / 1000;
+        queueWaitTime.observe(waitSeconds);
+      }
+
       // Clear idle timer when extraction starts
       this.clearIdleTimer();
       this.activeCount++;

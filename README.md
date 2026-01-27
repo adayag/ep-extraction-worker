@@ -86,18 +86,48 @@ GET http://localhost:9090/metrics
 
 ### Available Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `extraction_worker_circuit_breaker_open` | Gauge | Circuit breaker state (1=open, 0=closed) |
-| `extraction_worker_browser_launches_total` | Counter | Total browser launches |
-| `extraction_worker_browser_launch_failures_total` | Counter | Total browser launch failures |
-| `extraction_worker_browser_restarts_total{reason}` | Counter | Browser restarts by reason (idle/max_age) |
-| `extraction_worker_extractions_total{status}` | Counter | Extractions by status (success/failure) |
-| `extraction_worker_extraction_duration_seconds{status}` | Histogram | Extraction duration distribution |
-| `extraction_worker_queue_depth` | Gauge | Number of extractions waiting in queue |
-| `extraction_worker_active_extractions` | Gauge | Number of extractions currently running |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `extraction_worker_circuit_breaker_open` | Gauge | - | Circuit breaker state (1=open, 0=closed) |
+| `extraction_worker_circuit_breaker_trips_total` | Counter | - | Total circuit breaker trips (when circuit opens) |
+| `extraction_worker_browser_launches_total` | Counter | - | Total browser launches |
+| `extraction_worker_browser_launch_failures_total` | Counter | - | Total browser launch failures |
+| `extraction_worker_browser_restarts_total` | Counter | `reason` | Browser restarts by reason (idle/max_age) |
+| `extraction_worker_browser_disconnects_total` | Counter | - | Unexpected browser disconnections |
+| `extraction_worker_extractions_total` | Counter | `status`, `error_type` | Extractions by status and error type |
+| `extraction_worker_extraction_duration_seconds` | Histogram | `status` | Extraction duration distribution |
+| `extraction_worker_queue_depth` | Gauge | - | Number of extractions waiting in queue |
+| `extraction_worker_active_extractions` | Gauge | - | Number of extractions currently running |
+| `extraction_worker_queue_wait_seconds` | Histogram | - | Time waiting in queue before execution |
+| `extraction_worker_context_creation_seconds` | Histogram | - | Time to create browser context |
+| `extraction_worker_m3u8_detection_seconds` | Histogram | - | Time from page navigation to m3u8 intercept |
+
+**Error Types** (`error_type` label values):
+- `none` - Successful extraction
+- `timeout` - No m3u8 found within timeout
+- `circuit_open` - Rejected due to circuit breaker
+- `browser_error` - Browser crash or other error
 
 Default Node.js metrics (`nodejs_*`, `process_*`) are also included for memory, CPU, event loop, and GC stats.
+
+### Example Prometheus Queries
+
+```promql
+# Error rate by type
+sum by (error_type) (rate(extraction_worker_extractions_total{status="failure"}[5m]))
+
+# P95 queue wait time
+histogram_quantile(0.95, sum(rate(extraction_worker_queue_wait_seconds_bucket[5m])) by (le))
+
+# P95 extraction duration
+histogram_quantile(0.95, sum(rate(extraction_worker_extraction_duration_seconds_bucket[5m])) by (le))
+
+# Circuit breaker trip rate
+rate(extraction_worker_circuit_breaker_trips_total[5m])
+
+# Browser stability (disconnects per hour)
+rate(extraction_worker_browser_disconnects_total[1h]) * 3600
+```
 
 ### Prometheus Scrape Config
 

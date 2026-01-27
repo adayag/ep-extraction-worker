@@ -7,8 +7,21 @@ vi.mock('../extractor.js', () => ({
   extractM3u8: vi.fn(),
 }));
 
+// Mock metrics to verify error type labels
+vi.mock('../metrics.js', () => ({
+  extractionsTotal: { inc: vi.fn() },
+  extractionDuration: { observe: vi.fn() },
+  ERROR_TYPES: {
+    none: 'none',
+    timeout: 'timeout',
+    circuit_open: 'circuit_open',
+    browser_error: 'browser_error',
+  },
+}));
+
 import extractRouter from './extract.js';
 import { extractM3u8 } from '../extractor.js';
+import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
 describe('POST /extract', () => {
   let app: express.Application;
@@ -99,7 +112,12 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', timeout: 15000 });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 15000, 0);
+    expect(extractM3u8).toHaveBeenCalledWith(
+      'https://embed.example.com/embed/admin/123',
+      15000,
+      0,
+      expect.any(Number) // queueEnqueueTime
+    );
   });
 
   it('should use default timeout when not specified', async () => {
@@ -113,7 +131,12 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
+    expect(extractM3u8).toHaveBeenCalledWith(
+      'https://embed.example.com/embed/admin/123',
+      30000,
+      0,
+      expect.any(Number) // queueEnqueueTime
+    );
   });
 
   it('should pass high priority (10) when priority is "high"', async () => {
@@ -127,7 +150,12 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'high' });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 10);
+    expect(extractM3u8).toHaveBeenCalledWith(
+      'https://embed.example.com/embed/admin/123',
+      30000,
+      10,
+      expect.any(Number) // queueEnqueueTime
+    );
   });
 
   it('should pass normal priority (0) when priority is "normal"', async () => {
@@ -141,7 +169,12 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'normal' });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
+    expect(extractM3u8).toHaveBeenCalledWith(
+      'https://embed.example.com/embed/admin/123',
+      30000,
+      0,
+      expect.any(Number) // queueEnqueueTime
+    );
   });
 
   it('should treat invalid priority as normal (0)', async () => {
@@ -155,6 +188,118 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'invalid' });
 
-    expect(extractM3u8).toHaveBeenCalledWith('https://embed.example.com/embed/admin/123', 30000, 0);
+    expect(extractM3u8).toHaveBeenCalledWith(
+      'https://embed.example.com/embed/admin/123',
+      30000,
+      0,
+      expect.any(Number) // queueEnqueueTime
+    );
+  });
+
+  // Error type metrics tests
+  describe('error type metrics', () => {
+    it('should track success with error_type "none"', async () => {
+      vi.mocked(extractM3u8).mockResolvedValue({
+        url: 'https://cdn.example.com/stream.m3u8',
+        headers: {},
+      });
+
+      await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'success',
+        error_type: ERROR_TYPES.none,
+      });
+      expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
+      expect(extractionDuration.observe).toHaveBeenCalledWith(
+        { status: 'success' },
+        expect.any(Number)
+      );
+    });
+
+    it('should track timeout error_type when extraction returns null', async () => {
+      vi.mocked(extractM3u8).mockResolvedValue(null);
+
+      await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.timeout,
+      });
+      expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
+      expect(extractionDuration.observe).toHaveBeenCalledWith(
+        { status: 'failure' },
+        expect.any(Number)
+      );
+    });
+
+    it('should track circuit_open error_type when circuit breaker throws', async () => {
+      vi.mocked(extractM3u8).mockRejectedValue(new Error('Circuit breaker open, retry in 30s'));
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('Circuit breaker');
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.circuit_open,
+      });
+      expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
+      expect(extractionDuration.observe).toHaveBeenCalledWith(
+        { status: 'failure' },
+        expect.any(Number)
+      );
+    });
+
+    it('should track browser_error error_type for other errors', async () => {
+      vi.mocked(extractM3u8).mockRejectedValue(new Error('Browser crashed unexpectedly'));
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('Browser crashed unexpectedly');
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.browser_error,
+      });
+      expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
+      expect(extractionDuration.observe).toHaveBeenCalledWith(
+        { status: 'failure' },
+        expect.any(Number)
+      );
+    });
+
+    it('should handle non-Error rejection as browser_error', async () => {
+      vi.mocked(extractM3u8).mockRejectedValue('string error without Error object');
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('string error without Error object');
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.browser_error,
+      });
+    });
   });
 });
