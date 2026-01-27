@@ -2,10 +2,13 @@ import express from 'express';
 import consola from 'consola';
 import healthRouter from './routes/health.js';
 import extractRouter from './routes/extract.js';
+import metricsRouter from './routes/metrics.js';
 import { browserPool } from './browserPool.js';
 
 const app = express();
+const metricsApp = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const METRICS_PORT = parseInt(process.env.METRICS_PORT || '9090', 10);
 const CIRCUIT_BREAKER_EXIT_THRESHOLD = parseInt(process.env.CIRCUIT_BREAKER_EXIT_THRESHOLD || '120000', 10);
 const WATCHDOG_INTERVAL = 10000; // Check every 10 seconds
 
@@ -15,6 +18,9 @@ app.use(express.json());
 // Routes
 app.use('/', healthRouter);
 app.use('/', extractRouter);
+
+// Metrics on separate port (internal only)
+metricsApp.use('/', metricsRouter);
 
 // Track when circuit first opened for watchdog
 let circuitOpenSince: number | null = null;
@@ -46,13 +52,17 @@ function startWatchdog(): void {
   }, WATCHDOG_INTERVAL);
 }
 
-// Start server
+// Start servers
 const server = app.listen(PORT, () => {
   consola.info(`[ExtractionWorker] Server running on port ${PORT}`);
   consola.info(`[ExtractionWorker] Health: http://localhost:${PORT}/health`);
   consola.info(`[ExtractionWorker] Extract: POST http://localhost:${PORT}/extract`);
   consola.info(`[ExtractionWorker] Watchdog exit threshold: ${CIRCUIT_BREAKER_EXIT_THRESHOLD / 1000}s`);
   startWatchdog();
+});
+
+const metricsServer = metricsApp.listen(METRICS_PORT, () => {
+  consola.info(`[ExtractionWorker] Metrics: http://localhost:${METRICS_PORT}/metrics`);
 });
 
 // Graceful shutdown handler
@@ -65,6 +75,10 @@ async function shutdown(signal: string): Promise<void> {
 
   server.close(() => {
     consola.info('[ExtractionWorker] HTTP server closed');
+  });
+
+  metricsServer.close(() => {
+    consola.info('[ExtractionWorker] Metrics server closed');
   });
 
   await browserPool.close();

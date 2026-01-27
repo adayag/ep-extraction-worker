@@ -76,6 +76,37 @@ Authorization: Bearer <EXTRACTION_SECRET>
 }
 ```
 
+## Prometheus Metrics
+
+Metrics are exposed on a separate port (default `9090`) for internal scraping.
+
+```
+GET http://localhost:9090/metrics
+```
+
+### Available Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `extraction_worker_circuit_breaker_open` | Gauge | Circuit breaker state (1=open, 0=closed) |
+| `extraction_worker_browser_launches_total` | Counter | Total browser launches |
+| `extraction_worker_browser_launch_failures_total` | Counter | Total browser launch failures |
+| `extraction_worker_browser_restarts_total{reason}` | Counter | Browser restarts by reason (idle/max_age) |
+| `extraction_worker_extractions_total{status}` | Counter | Extractions by status (success/failure) |
+| `extraction_worker_extraction_duration_seconds{status}` | Histogram | Extraction duration distribution |
+| `extraction_worker_queue_depth` | Gauge | Number of extractions waiting in queue |
+| `extraction_worker_active_extractions` | Gauge | Number of extractions currently running |
+
+Default Node.js metrics (`nodejs_*`, `process_*`) are also included for memory, CPU, event loop, and GC stats.
+
+### Prometheus Scrape Config
+
+```yaml
+- job_name: 'extraction-worker'
+  static_configs:
+    - targets: ['ep-extraction-worker:9090']
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -89,6 +120,7 @@ Authorization: Bearer <EXTRACTION_SECRET>
 | `MAX_CONCURRENT` | `2` | Max simultaneous Chrome contexts |
 | `BROWSER_IDLE_TIMEOUT` | `60000` | Restart browser after idle (ms) |
 | `BROWSER_MAX_AGE` | `7200000` | Max browser lifetime (ms, 2 hours) |
+| `METRICS_PORT` | `9090` | Prometheus metrics port (internal) |
 
 ### Example .env
 
@@ -160,6 +192,7 @@ COPY dist ./dist
 ENV NODE_ENV=production
 ENV CHROME_PATH=/usr/bin/google-chrome-stable
 EXPOSE 3001
+EXPOSE 9090
 
 CMD ["node", "dist/index.js"]
 ```

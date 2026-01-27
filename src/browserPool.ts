@@ -2,6 +2,14 @@ import { chromium } from 'patchright';
 import type { Browser, BrowserContext } from 'patchright';
 import consola from 'consola';
 import PQueue from 'p-queue';
+import {
+  browserLaunches,
+  browserLaunchFailures,
+  browserRestarts,
+  circuitBreakerOpen,
+  queueDepth,
+  activeExtractions,
+} from './metrics.js';
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
 const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT || '60000', 10); // 60 seconds
@@ -37,6 +45,7 @@ class BrowserPool {
         const age = Date.now() - this.launchTime;
         if (age > MAX_AGE_MS && this.activeCount === 0) {
           consola.info(`[BrowserPool] Max age exceeded (${Math.round(age / 1000)}s), restarting browser`);
+          browserRestarts.inc({ reason: 'max_age' });
           await this.restartBrowser();
         } else {
           return this.browser;
@@ -72,14 +81,17 @@ class BrowserPool {
       // Success - reset circuit breaker
       this.consecutiveFailures = 0;
       this.circuitOpenUntil = 0;
+      circuitBreakerOpen.set(0);
       return browser;
     } catch (error) {
       // Failure - increment and possibly open circuit
       this.consecutiveFailures++;
+      browserLaunchFailures.inc();
       consola.error(`[BrowserPool] Launch failed (${this.consecutiveFailures}/${CIRCUIT_BREAKER_THRESHOLD}):`, error);
 
       if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
         this.circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_RESET_MS;
+        circuitBreakerOpen.set(1);
         consola.error(`[BrowserPool] Circuit breaker OPEN for ${CIRCUIT_BREAKER_RESET_MS / 1000}s`);
       }
       throw error;
@@ -146,6 +158,7 @@ class BrowserPool {
     });
 
     consola.info('[BrowserPool] Browser launched');
+    browserLaunches.inc();
     return browser;
   }
 
@@ -177,10 +190,17 @@ class BrowserPool {
       this.clearIdleTimer();
       this.activeCount++;
 
+      // Update metrics
+      queueDepth.set(this.queue.size);
+      activeExtractions.set(this.activeCount);
+
       try {
         return await fn();
       } finally {
         this.activeCount--;
+        // Update metrics
+        queueDepth.set(this.queue.size);
+        activeExtractions.set(this.activeCount);
         // Schedule idle restart after extraction completes (if no more active)
         if (this.activeCount === 0) {
           this.scheduleIdleRestart();
@@ -218,6 +238,7 @@ class BrowserPool {
       if (this.activeCount === 0 && this.browser) {
         const age = Math.round((Date.now() - this.launchTime) / 1000);
         consola.info(`[BrowserPool] Idle restart (age: ${age}s)`);
+        browserRestarts.inc({ reason: 'idle' });
         await this.restartBrowser();
       }
     }, IDLE_TIMEOUT_MS);

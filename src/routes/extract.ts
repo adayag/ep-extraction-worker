@@ -2,6 +2,7 @@ import { Router } from 'express';
 import consola from 'consola';
 import { authMiddleware } from '../middleware/auth.js';
 import { extractM3u8 } from '../extractor.js';
+import { extractionsTotal, extractionDuration } from '../metrics.js';
 
 const router = Router();
 
@@ -45,9 +46,12 @@ router.post('/extract', authMiddleware, async (req, res) => {
   consola.info(`[Extract] QUEUED ${shortId} (priority: ${priorityLabel})`);
   const extracted = await extractM3u8(embedUrl, timeout, priority);
   const duration = Date.now() - startTime;
+  const durationSeconds = duration / 1000;
 
   if (!extracted) {
     consola.warn(`[Extract] FAILED ${shortId} (${duration}ms)`);
+    extractionsTotal.inc({ status: 'failure' });
+    extractionDuration.observe({ status: 'failure' }, durationSeconds);
     res.json({
       success: false,
       error: 'm3u8 extraction failed',
@@ -56,6 +60,8 @@ router.post('/extract', authMiddleware, async (req, res) => {
   }
 
   consola.info(`[Extract] OK ${shortId} (${duration}ms)`);
+  extractionsTotal.inc({ status: 'success' });
+  extractionDuration.observe({ status: 'success' }, durationSeconds);
 
   res.json({
     success: true,
