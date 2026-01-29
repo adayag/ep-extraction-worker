@@ -269,7 +269,7 @@ async function doExtraction(
 
 export async function extractM3u8(
   embedUrl: string,
-  timeout: number = 15000,
+  timeout: number = 10000,
   priority: number = 0,
   queueEnqueueTime?: number
 ): Promise<ExtractedStream | null> {
