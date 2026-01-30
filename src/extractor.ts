@@ -73,18 +73,11 @@ async function tryClickInFrame(frame: Frame): Promise<void> {
   }
 }
 
-// Enable verbose logging for debugging specific embed issues
-const VERBOSE = process.env.EXTRACTOR_VERBOSE === 'true';
-
 async function doExtraction(
   embedUrl: string,
   timeout: number
 ): Promise<ExtractedStream | null> {
   consola.debug(`[Extractor] Opening: ${embedUrl}`);
-
-  // Track requests for verbose logging
-  let requestCount = 0;
-  let mediaRequests: string[] = [];
 
   let context: BrowserContext | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -115,14 +108,6 @@ async function doExtraction(
     await context.route('**/*', async (route) => {
       const url = route.request().url();
       const resourceType = route.request().resourceType();
-      requestCount++;
-
-      // Track media requests for verbose logging
-      if (VERBOSE && ['media', 'xhr', 'fetch'].includes(resourceType)) {
-        if (url.includes('m3u') || url.includes('.ts') || url.includes('video') || url.includes('stream')) {
-          mediaRequests.push(`[${resourceType}] ${url.substring(0, 100)}`);
-        }
-      }
 
       // Check for m3u8 FIRST (before any blocking)
       if (url.includes('.m3u8') && !url.includes('.ts.m3u8')) {
@@ -232,10 +217,6 @@ async function doExtraction(
       if (!resolved) {
         resolved = true;
         consola.warn(`[Extractor] No m3u8 found after ${timeout}ms: ${embedUrl}`);
-        if (VERBOSE) {
-          consola.warn(`[Extractor] Verbose: ${requestCount} requests, media-like: ${mediaRequests.length}`);
-          mediaRequests.slice(-10).forEach(r => consola.warn(`[Extractor]   ${r}`));
-        }
         resolvePromise(null);
       }
     }, timeout);
@@ -248,13 +229,6 @@ async function doExtraction(
 
     // Wait for page to settle (reduced from 2000ms)
     await page.waitForTimeout(500).catch(() => {});
-
-    // Verbose logging after navigation
-    if (VERBOSE) {
-      const title = await page.title().catch(() => 'unknown');
-      const frameCount = page.frames().length - 1;
-      consola.info(`[Extractor] Verbose: page loaded, title="${title}", iframes=${frameCount}, requests=${requestCount}`);
-    }
 
     // Try clicking play on main page
     if (!resolved) {
