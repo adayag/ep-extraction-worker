@@ -51,7 +51,7 @@ Authorization: Bearer <EXTRACTION_SECRET>
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `embedUrl` | Yes | - | The embed page URL to extract from |
+| `embedUrl` | Yes | - | The embed page URL to extract from (must be `http`/`https`, blocked for internal IPs and localhost) |
 | `timeout` | No | 30000 | Extraction timeout in ms |
 | `priority` | No | `"normal"` | `"high"` jumps queue, `"normal"` is FIFO |
 
@@ -151,6 +151,7 @@ rate(extraction_worker_browser_disconnects_total[1h]) * 3600
 | `BROWSER_IDLE_TIMEOUT` | `60000` | Restart browser after idle (ms) |
 | `BROWSER_MAX_AGE` | `7200000` | Max browser lifetime (ms, 2 hours) |
 | `METRICS_PORT` | `9090` | Prometheus metrics port (internal) |
+| `SHUTDOWN_TIMEOUT` | `30000` | Max ms to wait for in-flight requests during shutdown |
 
 ### Example .env
 
@@ -169,7 +170,7 @@ MAX_CONCURRENT=2
 │             EP Extraction Worker               │
 ├────────────────────────────────────────────────┤
 │                                                │
-│  POST /extract ─► Auth Check ─► Browser Pool   │
+│  POST /extract ─► Auth ─► URL Check ─► Pool     │
 │                                    │           │
 │                         ┌──────────┴───────────┐
 │                         │   p-queue (priority) │
