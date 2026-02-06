@@ -66,21 +66,52 @@ const metricsServer = metricsApp.listen(METRICS_PORT, () => {
 });
 
 // Graceful shutdown handler
+const SHUTDOWN_TIMEOUT = parseInt(process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+let shutdownInProgress = false;
+
 async function shutdown(signal: string): Promise<void> {
+  if (shutdownInProgress) {
+    consola.warn(`[ExtractionWorker] Shutdown already in progress, ignoring ${signal}`);
+    return;
+  }
+  shutdownInProgress = true;
+
   consola.info(`[ExtractionWorker] Received ${signal}, shutting down gracefully...`);
 
+  // 1. Stop watchdog
   if (watchdogTimer) {
     clearInterval(watchdogTimer);
   }
 
-  server.close(() => {
-    consola.info('[ExtractionWorker] HTTP server closed');
+  // 2. Stop accepting new connections and wait for in-flight requests to drain
+  const serverClose = new Promise<void>((resolve) => {
+    server.close(() => {
+      consola.info('[ExtractionWorker] HTTP server closed');
+      resolve();
+    });
   });
 
-  metricsServer.close(() => {
-    consola.info('[ExtractionWorker] Metrics server closed');
+  const metricsClose = new Promise<void>((resolve) => {
+    metricsServer.close(() => {
+      consola.info('[ExtractionWorker] Metrics server closed');
+      resolve();
+    });
   });
 
+  const forceTimeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      consola.warn(`[ExtractionWorker] Shutdown timeout (${SHUTDOWN_TIMEOUT}ms) reached, forcing close`);
+      resolve();
+    }, SHUTDOWN_TIMEOUT);
+  });
+
+  // 3. Wait for servers to drain or timeout
+  await Promise.race([
+    Promise.all([serverClose, metricsClose]),
+    forceTimeout,
+  ]);
+
+  // 4. Close browser pool
   await browserPool.close();
   consola.info('[ExtractionWorker] Shutdown complete');
   process.exit(0);

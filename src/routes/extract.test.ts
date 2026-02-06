@@ -196,6 +196,134 @@ describe('POST /extract', () => {
     );
   });
 
+  // URL validation / SSRF protection tests
+  describe('URL validation', () => {
+    it('should reject file:// scheme', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'file:///etc/passwd' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked URL scheme');
+    });
+
+    it('should reject javascript: scheme', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'javascript:alert(1)' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked URL scheme');
+    });
+
+    it('should reject malformed URL', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'not-a-url' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Invalid URL');
+    });
+
+    it('should reject http://127.0.0.1', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://127.0.0.1/foo' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should reject http://169.254.169.254 (cloud metadata)', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://169.254.169.254/latest/meta-data/' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should reject http://10.0.0.1 (RFC1918)', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://10.0.0.1/admin' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should reject http://192.168.1.1 (RFC1918)', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://192.168.1.1/' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should reject http://172.16.0.1 (RFC1918)', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://172.16.0.1/' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should reject http://localhost', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://localhost/foo' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked hostname: localhost');
+    });
+
+    it('should reject http://[::1] (IPv6 loopback)', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://[::1]/foo' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked IPv6');
+    });
+
+    it('should reject http://0.0.0.0', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'http://0.0.0.0/' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Blocked internal IP');
+    });
+
+    it('should accept valid https embed URL', async () => {
+      vi.mocked(extractM3u8).mockResolvedValue({
+        url: 'https://cdn.example.com/stream.m3u8',
+        headers: {},
+      });
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/video' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
   // Error type metrics tests
   describe('error type metrics', () => {
     it('should track success with error_type "none"', async () => {
