@@ -31,17 +31,17 @@ npm run dev
 
 | Constant | Value | Location |
 |----------|-------|----------|
-| `WATCHDOG_INTERVAL` | 10 000 ms | `src/index.ts:13` |
-| `CIRCUIT_BREAKER_THRESHOLD` | 3 consecutive failures | `src/browserPool.ts:22` |
-| `CIRCUIT_BREAKER_RESET_MS` | 30 000 ms | `src/browserPool.ts:23` |
-| `PRIORITY_LEVELS.normal` | 0 | `src/routes/extract.ts:17` |
-| `PRIORITY_LEVELS.high` | 10 | `src/routes/extract.ts:18` |
-| `page.goto` timeout | 15 000 ms | `src/extractor.ts:228` |
-| Post-navigate wait | 500 ms | `src/extractor.ts:231` |
-| Click timeout | 500 ms | `src/extractor.ts:65` |
-| Chrome JS heap limit | 128 MB | `src/browserPool.ts:133` |
-| Node.js heap limit (Docker) | 512 MB | `Dockerfile:85` |
-| Browser viewport | 800 × 600 | `src/browserPool.ts:177–178` |
+| `WATCHDOG_INTERVAL` | 10 000 ms | `src/index.ts` |
+| `CIRCUIT_BREAKER_THRESHOLD` | 3 consecutive failures | `src/browserPool.ts` |
+| `CIRCUIT_BREAKER_RESET_MS` | 30 000 ms | `src/browserPool.ts` |
+| `PRIORITY_LEVELS.normal` | 0 | `src/routes/extract.ts` |
+| `PRIORITY_LEVELS.high` | 10 | `src/routes/extract.ts` |
+| Navigation timeout | 15 000 ms | `src/extractor.ts` (hardcoded `page.goto` timeout) |
+| Post-navigation wait | 500 ms | `src/extractor.ts` (hardcoded `waitForTimeout` after navigate) |
+| Click timeout | 500 ms | `src/extractor.ts` (hardcoded play button click timeout) |
+| Chrome JS heap limit | 128 MB | `src/browserPool.ts` (`--max-old-space-size` launch arg) |
+| Node.js heap limit (Docker) | 512 MB | `Dockerfile` (`--max-old-space-size` in CMD) |
+| Browser viewport | 800 × 600 | `src/browserPool.ts` (context creation) |
 
 ## npm Scripts
 
@@ -96,7 +96,7 @@ Authorization: Bearer <EXTRACTION_SECRET>
 }
 ```
 
-`cookies` is included only when the browser context captured cookies. `headers` always includes `Referer`, `Origin`, and `User-Agent`.
+`url` and `m3u8Url` return the same value (both included for backwards compatibility). `cookies` is included only when the browser context captured cookies. `headers` always includes `Referer`, `Origin`, and `User-Agent`.
 
 **Response (not found):**
 ```json
@@ -108,13 +108,13 @@ Authorization: Bearer <EXTRACTION_SECRET>
 
 **Status codes:**
 
-| Code | Condition |
-|------|-----------|
-| `200` | Success, or extraction failed (m3u8 not found within timeout) |
-| `400` | Missing `embedUrl`, or SSRF-blocked URL |
-| `401` | Missing or invalid `Authorization` header |
-| `500` | `EXTRACTION_SECRET` not configured on server |
-| `503` | Circuit breaker open, or browser crash/error |
+| Code | Condition | Response body |
+|------|-----------|---------------|
+| `200` | Success, or extraction failed (m3u8 not found within timeout) | See success/not-found examples above |
+| `400` | Missing `embedUrl`, or SSRF-blocked URL | `{ "error": "embedUrl is required" }` or `{ "error": "<validation message>" }` (e.g. `"Blocked hostname: localhost"`, `"Blocked internal IP address: 10.0.0.1"`) |
+| `401` | Missing or invalid `Authorization` header | `{ "error": "Missing or invalid Authorization header" }` or `{ "error": "Invalid token" }` |
+| `500` | `EXTRACTION_SECRET` not configured on server | `{ "error": "Server misconfigured: EXTRACTION_SECRET not set" }` |
+| `503` | Circuit breaker open, or browser crash/error | `{ "error": "Circuit breaker open, retry in Xs" }` or `{ "error": "Extraction failed: <message>" }` |
 
 ### `GET /health`
 
@@ -148,7 +148,7 @@ Returns server health, queue state, and circuit breaker status.
 
 ### `GET /metrics` (port 9090)
 
-Prometheus metrics on a separate port for internal scraping.
+Prometheus metrics on a separate port (`METRICS_PORT`, default 9090) for internal scraping. Default Node.js metrics (`nodejs_*`, `process_*`) are served on this same port.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -167,8 +167,6 @@ Prometheus metrics on a separate port for internal scraping.
 | `extraction_worker_m3u8_detection_seconds` | Histogram | — | Time from navigation to m3u8 intercept |
 
 **Error types** (`error_type` label values): `none`, `timeout`, `circuit_open`, `browser_error`
-
-Default Node.js metrics (`nodejs_*`, `process_*`) are also included.
 
 **Example queries:**
 ```promql
@@ -196,6 +194,19 @@ rate(extraction_worker_browser_disconnects_total[1h]) * 3600
 ```
 
 ## Architecture
+
+### Play Button Selectors
+
+Tried in order on the main frame, then all iframes in parallel:
+
+1. `.jw-icon-playback` — JW Player
+2. `.jw-display-icon-container` — JW Player
+3. `.vjs-big-play-button` — Video.js
+4. `[aria-label="Play"]` — generic ARIA
+5. `.play-button` — generic class
+6. `.plyr__control--overlaid` — Plyr
+7. `video` — HTML5 video element (direct `.play()`)
+8. `[class*="play"]` — any class containing "play"
 
 ### Request Flow
 
@@ -304,7 +315,7 @@ Multi-stage build: `node:20-alpine` (builder) → `node:20-slim` (production wit
 
 Builds trigger on:
 - **Push to `main`:** Tags image as `main`, `latest`, and commit SHA
-- **Tag push (`v*`):** Tags image as semver (`1.2.3`, `1.2`) plus `latest` and SHA
+- **Tag push (`v*`):** Tags image as semver (`1.2.3`, `1.2`) and commit SHA. `latest` is only applied on default branch pushes.
 - **Manual dispatch**
 
 Image published to `ghcr.io/<owner>/ep-extraction-worker`. Platform: `linux/amd64`. Uses GitHub Actions cache (`type=gha`).
