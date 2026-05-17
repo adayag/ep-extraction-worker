@@ -29,6 +29,8 @@ class BrowserPool {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private launchTime: number = 0;
   private activeCount = 0;
+  private taskStartTimes = new Map<number, number>();
+  private nextTaskId = 0;
 
   // Circuit breaker state
   private consecutiveFailures = 0;
@@ -191,6 +193,7 @@ class BrowserPool {
    * @param queueEnqueueTime - Timestamp when request was queued (for wait time tracking)
    */
   async withLimit<T>(fn: () => Promise<T>, priority = 0, queueEnqueueTime?: number): Promise<T> {
+    const taskId = ++this.nextTaskId;
     const result = await this.queue.add(async () => {
       // Track queue wait time if enqueue time provided
       if (queueEnqueueTime !== undefined) {
@@ -201,6 +204,7 @@ class BrowserPool {
       // Clear idle timer when extraction starts
       this.clearIdleTimer();
       this.activeCount++;
+      this.taskStartTimes.set(taskId, Date.now());
 
       // Update metrics
       queueDepth.set(this.queue.size);
@@ -210,6 +214,7 @@ class BrowserPool {
         return await fn();
       } finally {
         this.activeCount--;
+        this.taskStartTimes.delete(taskId);
         // Update metrics
         queueDepth.set(this.queue.size);
         activeExtractions.set(this.activeCount);
@@ -221,6 +226,18 @@ class BrowserPool {
     }, { priority });
 
     return result as T;
+  }
+
+  /**
+   * Age in ms of the oldest currently-running task, or null if none are running.
+   */
+  getOldestRunningTaskAge(): number | null {
+    if (this.taskStartTimes.size === 0) return null;
+    let oldest = Infinity;
+    for (const startedAt of this.taskStartTimes.values()) {
+      if (startedAt < oldest) oldest = startedAt;
+    }
+    return Date.now() - oldest;
   }
 
   /**

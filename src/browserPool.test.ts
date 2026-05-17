@@ -306,4 +306,52 @@ describe('browserPool', () => {
       await browserPool.close();
     });
   });
+
+  describe('oldest running task age', () => {
+    it('returns null when no tasks are running', async () => {
+      vi.resetModules();
+      vi.useRealTimers();
+
+      const { browserPool } = await import('./browserPool.js');
+      expect(browserPool.getOldestRunningTaskAge()).toBeNull();
+
+      await browserPool.close();
+    });
+
+    it('reports the age of the longest-running task', async () => {
+      vi.resetModules();
+      vi.useRealTimers();
+
+      // Explicit so this test doesn't depend on a previous test's leftover env
+      process.env.MAX_CONCURRENT = '2';
+      const { browserPool } = await import('./browserPool.js');
+
+      let releaseOldest!: () => void;
+      const oldestPromise = browserPool.withLimit(
+        () => new Promise<void>((resolve) => { releaseOldest = resolve; }),
+      );
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      let releaseNewer!: () => void;
+      const newerPromise = browserPool.withLimit(
+        () => new Promise<void>((resolve) => { releaseNewer = resolve; }),
+      );
+
+      await new Promise((r) => setTimeout(r, 30));
+
+      const age = browserPool.getOldestRunningTaskAge();
+      expect(age).not.toBeNull();
+      expect(age!).toBeGreaterThanOrEqual(60);
+
+      releaseOldest();
+      releaseNewer();
+      await Promise.all([oldestPromise, newerPromise]);
+
+      expect(browserPool.getOldestRunningTaskAge()).toBeNull();
+
+      delete process.env.MAX_CONCURRENT;
+      await browserPool.close();
+    });
+  });
 });
