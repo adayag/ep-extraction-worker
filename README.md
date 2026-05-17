@@ -255,7 +255,7 @@ Protects against repeated Chrome launch failures:
 
 **Watchdog:** A timer checks every 10 s (`WATCHDOG_INTERVAL`). If the circuit breaker has been continuously open longer than `CIRCUIT_BREAKER_EXIT_THRESHOLD` (default 120 s), the process exits with code 1 for container restart.
 
-The watchdog also detects a **wedged queue**: if `queue size >= STUCK_QUEUE_SIZE_THRESHOLD` AND the oldest running task has been running for `>= STUCK_QUEUE_AGE_THRESHOLD`, the process exits with code 1 for container restart. This guards against Patchright/CDP hangs that would otherwise leak both p-queue slots indefinitely.
+The watchdog also detects a **wedged queue**: if `queue size >= STUCK_QUEUE_SIZE_THRESHOLD` AND the oldest running task has been running for `>= STUCK_QUEUE_AGE_THRESHOLD`, the process exits with code 1 for container restart. This is a last-resort safety net — `QUEUE_TASK_TIMEOUT` (default 90 s) should free the slot before the 120 s age threshold trips, so this only fires if the hard timeout itself misbehaves. `process.exit(1)` is used instead of `SIGTERM` because a wedged worker can't run its own graceful shutdown.
 
 ### Extraction Pipeline
 

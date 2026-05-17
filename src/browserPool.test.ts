@@ -321,7 +321,7 @@ describe('browserPool', () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(browserPool.getActiveCount()).toBe(1);
 
-      await expect(hungPromise).rejects.toThrow(/timeout/i);
+      await expect(hungPromise).rejects.toThrow(/QUEUE_TASK_TIMEOUT/);
 
       expect(browserPool.getActiveCount()).toBe(0);
 

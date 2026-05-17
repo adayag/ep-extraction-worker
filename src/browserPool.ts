@@ -23,6 +23,18 @@ const QUEUE_TASK_TIMEOUT_MS = parseInt(process.env.QUEUE_TASK_TIMEOUT || '90000'
 const CIRCUIT_BREAKER_THRESHOLD = 3; // failures before opening circuit
 const CIRCUIT_BREAKER_RESET_MS = 30000; // 30 seconds before retry
 
+/**
+ * Thrown by withLimit when a task exceeds QUEUE_TASK_TIMEOUT_MS.
+ * Sentinel error class so callers can classify it via instanceof instead of
+ * brittle message-substring matching.
+ */
+export class QueueTaskTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Task exceeded QUEUE_TASK_TIMEOUT (${timeoutMs}ms)`);
+    this.name = 'QueueTaskTimeoutError';
+  }
+}
+
 class BrowserPool {
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
@@ -212,18 +224,24 @@ class BrowserPool {
       activeExtractions.set(this.activeCount);
 
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const work = fn();
       try {
         return await Promise.race([
-          fn(),
+          work,
           new Promise<never>((_, reject) => {
             timeoutHandle = setTimeout(
-              () => reject(new Error(`Task exceeded QUEUE_TASK_TIMEOUT (${QUEUE_TASK_TIMEOUT_MS}ms)`)),
+              () => reject(new QueueTaskTimeoutError(QUEUE_TASK_TIMEOUT_MS)),
               QUEUE_TASK_TIMEOUT_MS,
             );
           }),
         ]);
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
+        // When the timeout wins the race, `work` is still pending. If it later
+        // rejects (typical: "Target closed" when the browser is restarted),
+        // nothing is awaiting it — that would trigger unhandledRejection and
+        // crash the process. Attach a no-op handler to silence late settlement.
+        work.catch(() => {});
         this.activeCount--;
         this.taskStartTimes.delete(taskId);
         // Update metrics

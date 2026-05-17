@@ -52,7 +52,9 @@ function startWatchdog(): void {
       }
     }
 
-    // Detect a wedged queue: many requests pending AND the oldest running task is older than threshold
+    // Detect a wedged queue: many requests pending AND the oldest running task is older than threshold.
+    // Last-resort safety net — normally QUEUE_TASK_TIMEOUT (90s) frees the slot before the
+    // 120s age threshold trips, so this only fires if the hard timeout itself misbehaves.
     const queueSize = browserPool.getQueueSize();
     const oldestAge = browserPool.getOldestRunningTaskAge();
     if (
@@ -64,6 +66,10 @@ function startWatchdog(): void {
         `[Watchdog] Queue wedged: pending=${queueSize}, oldest running task age=${Math.round(oldestAge / 1000)}s`,
       );
       consola.error('[Watchdog] Exiting process for container restart...');
+      // process.exit(1) is intentional, not SIGTERM. A wedged worker can't run its own graceful
+      // shutdown (browser.close() would hang on the same stuck contexts). Hard exit lets the
+      // container orchestrator reap us and start fresh. In-flight HTTP requests get connection-
+      // reset, which the upstream caller already handles for the existing crash-recovery path.
       process.exit(1);
     }
   }, WATCHDOG_INTERVAL);

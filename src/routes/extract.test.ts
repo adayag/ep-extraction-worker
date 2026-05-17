@@ -15,12 +15,14 @@ vi.mock('../metrics.js', () => ({
     none: 'none',
     timeout: 'timeout',
     circuit_open: 'circuit_open',
+    queue_timeout: 'queue_timeout',
     browser_error: 'browser_error',
   },
 }));
 
 import extractRouter from './extract.js';
 import { extractM3u8 } from '../extractor.js';
+import { QueueTaskTimeoutError } from '../browserPool.js';
 import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
 describe('POST /extract', () => {
@@ -405,6 +407,28 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.browser_error,
+      });
+      expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
+      expect(extractionDuration.observe).toHaveBeenCalledWith(
+        { status: 'failure' },
+        expect.any(Number)
+      );
+    });
+
+    it('should track queue_timeout error_type when QueueTaskTimeoutError thrown', async () => {
+      vi.mocked(extractM3u8).mockRejectedValue(new QueueTaskTimeoutError(90000));
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/QUEUE_TASK_TIMEOUT/);
+      expect(extractionsTotal.inc).toHaveBeenCalledTimes(1);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.queue_timeout,
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(

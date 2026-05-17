@@ -2,6 +2,7 @@ import { Router } from 'express';
 import consola from 'consola';
 import { authMiddleware } from '../middleware/auth.js';
 import { extractM3u8 } from '../extractor.js';
+import { QueueTaskTimeoutError } from '../browserPool.js';
 import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
 const router = Router();
@@ -130,10 +131,10 @@ router.post('/extract', authMiddleware, async (req, res) => {
 
     // Classify error type
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorType = errorMessage.includes('Circuit breaker')
-      ? ERROR_TYPES.circuit_open
-      : errorMessage.includes('QUEUE_TASK_TIMEOUT')
-        ? ERROR_TYPES.queue_timeout
+    const errorType = error instanceof QueueTaskTimeoutError
+      ? ERROR_TYPES.queue_timeout
+      : errorMessage.includes('Circuit breaker')
+        ? ERROR_TYPES.circuit_open
         : ERROR_TYPES.browser_error;
 
     consola.error(`[Extract] ERROR ${shortId} (${duration}ms) - ${errorType}:`, error);
