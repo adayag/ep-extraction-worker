@@ -17,6 +17,7 @@ import {
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '2', 10);
 const IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT || '60000', 10); // 60 seconds
 const MAX_AGE_MS = parseInt(process.env.BROWSER_MAX_AGE || '7200000', 10); // 2 hours
+const QUEUE_TASK_TIMEOUT_MS = parseInt(process.env.QUEUE_TASK_TIMEOUT || '90000', 10); // 90 seconds
 
 // Circuit breaker settings
 const CIRCUIT_BREAKER_THRESHOLD = 3; // failures before opening circuit
@@ -210,9 +211,19 @@ class BrowserPool {
       queueDepth.set(this.queue.size);
       activeExtractions.set(this.activeCount);
 
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
-        return await fn();
+        return await Promise.race([
+          fn(),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
+              () => reject(new Error(`Task exceeded QUEUE_TASK_TIMEOUT (${QUEUE_TASK_TIMEOUT_MS}ms)`)),
+              QUEUE_TASK_TIMEOUT_MS,
+            );
+          }),
+        ]);
       } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         this.activeCount--;
         this.taskStartTimes.delete(taskId);
         // Update metrics

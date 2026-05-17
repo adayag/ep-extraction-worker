@@ -307,6 +307,50 @@ describe('browserPool', () => {
     });
   });
 
+  describe('hard task timeout', () => {
+    it('rejects a task that hangs longer than QUEUE_TASK_TIMEOUT and frees the slot', async () => {
+      vi.resetModules();
+      vi.useRealTimers();
+
+      process.env.QUEUE_TASK_TIMEOUT = '100';
+      process.env.MAX_CONCURRENT = '1';
+      const { browserPool } = await import('./browserPool.js');
+
+      const hungPromise = browserPool.withLimit(() => new Promise(() => {}));
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(browserPool.getActiveCount()).toBe(1);
+
+      await expect(hungPromise).rejects.toThrow(/timeout/i);
+
+      expect(browserPool.getActiveCount()).toBe(0);
+
+      const result = await browserPool.withLimit(() => Promise.resolve('ok'));
+      expect(result).toBe('ok');
+
+      delete process.env.QUEUE_TASK_TIMEOUT;
+      delete process.env.MAX_CONCURRENT;
+      await browserPool.close();
+    });
+
+    it('does not affect tasks that finish before the hard timeout', async () => {
+      vi.resetModules();
+      vi.useRealTimers();
+
+      process.env.QUEUE_TASK_TIMEOUT = '500';
+      const { browserPool } = await import('./browserPool.js');
+
+      const result = await browserPool.withLimit(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        return 'fast';
+      });
+      expect(result).toBe('fast');
+
+      delete process.env.QUEUE_TASK_TIMEOUT;
+      await browserPool.close();
+    });
+  });
+
   describe('oldest running task age', () => {
     it('returns null when no tasks are running', async () => {
       vi.resetModules();
