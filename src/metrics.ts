@@ -40,6 +40,7 @@ export const ERROR_TYPES = {
   none: 'none',
   timeout: 'timeout',
   circuit_open: 'circuit_open',
+  queue_timeout: 'queue_timeout',
   browser_error: 'browser_error',
 } as const;
 

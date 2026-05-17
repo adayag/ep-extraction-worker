@@ -132,7 +132,9 @@ router.post('/extract', authMiddleware, async (req, res) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorType = errorMessage.includes('Circuit breaker')
       ? ERROR_TYPES.circuit_open
-      : ERROR_TYPES.browser_error;
+      : errorMessage.includes('QUEUE_TASK_TIMEOUT')
+        ? ERROR_TYPES.queue_timeout
+        : ERROR_TYPES.browser_error;
 
     consola.error(`[Extract] ERROR ${shortId} (${duration}ms) - ${errorType}:`, error);
     extractionsTotal.inc({ status: 'failure', error_type: errorType });
