@@ -10,6 +10,8 @@ const metricsApp = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const METRICS_PORT = parseInt(process.env.METRICS_PORT || '9090', 10);
 const CIRCUIT_BREAKER_EXIT_THRESHOLD = parseInt(process.env.CIRCUIT_BREAKER_EXIT_THRESHOLD || '120000', 10);
+const STUCK_QUEUE_SIZE_THRESHOLD = parseInt(process.env.STUCK_QUEUE_SIZE_THRESHOLD || '20', 10);
+const STUCK_QUEUE_AGE_THRESHOLD = parseInt(process.env.STUCK_QUEUE_AGE_THRESHOLD || '120000', 10);
 const WATCHDOG_INTERVAL = 10000; // Check every 10 seconds
 
 // Middleware
@@ -48,6 +50,21 @@ function startWatchdog(): void {
         consola.info('[Watchdog] Circuit breaker recovered');
         circuitOpenSince = null;
       }
+    }
+
+    // Detect a wedged queue: many requests pending AND the oldest running task is older than threshold
+    const queueSize = browserPool.getQueueSize();
+    const oldestAge = browserPool.getOldestRunningTaskAge();
+    if (
+      queueSize >= STUCK_QUEUE_SIZE_THRESHOLD &&
+      oldestAge !== null &&
+      oldestAge >= STUCK_QUEUE_AGE_THRESHOLD
+    ) {
+      consola.error(
+        `[Watchdog] Queue wedged: pending=${queueSize}, oldest running task age=${Math.round(oldestAge / 1000)}s`,
+      );
+      consola.error('[Watchdog] Exiting process for container restart...');
+      process.exit(1);
     }
   }, WATCHDOG_INTERVAL);
 }
