@@ -26,6 +26,9 @@ npm run dev
 | `BROWSER_MAX_AGE` | `7200000` | No | Force browser restart after this many ms (2 h) |
 | `SHUTDOWN_TIMEOUT` | `30000` | No | Max ms to wait for in-flight requests during graceful shutdown (30 s) |
 | `CIRCUIT_BREAKER_EXIT_THRESHOLD` | `120000` | No | If circuit breaker stays open longer than this (120 s), the watchdog calls `process.exit(1)` for container restart |
+| `QUEUE_TASK_TIMEOUT` | `90000` | No | Hard timeout per queued task (90 s). When a task exceeds this, the p-queue slot is freed even if the underlying Playwright call is still hung. Prevents the queue-wedge failure mode where leaked slots stall all new extractions. |
+| `STUCK_QUEUE_SIZE_THRESHOLD` | `20` | No | Watchdog: minimum pending count to consider the queue stuck (paired with `STUCK_QUEUE_AGE_THRESHOLD`) |
+| `STUCK_QUEUE_AGE_THRESHOLD` | `120000` | No | Watchdog: if the queue size threshold is met AND the oldest running task has been running longer than this (120 s), the watchdog calls `process.exit(1)` for container restart |
 
 ### Internal Constants
 
@@ -166,7 +169,7 @@ Prometheus metrics on a separate port (`METRICS_PORT`, default 9090) for interna
 | `extraction_worker_context_creation_seconds` | Histogram | — | Time to create browser context |
 | `extraction_worker_m3u8_detection_seconds` | Histogram | — | Time from navigation to m3u8 intercept |
 
-**Error types** (`error_type` label values): `none`, `timeout`, `circuit_open`, `browser_error`
+**Error types** (`error_type` label values): `none`, `timeout`, `circuit_open`, `queue_timeout`, `browser_error`
 
 **Example queries:**
 ```promql
@@ -239,6 +242,8 @@ Single Chrome instance managed as a **lazy singleton** — not launched at start
 
 Extractions are queued through `p-queue` with `concurrency: MAX_CONCURRENT` (default 2). Requests specify `"high"` (priority 10, jumps queue) or `"normal"` (priority 0, FIFO). Invalid priority values fall back to `normal`.
 
+Each task is also bounded by `QUEUE_TASK_TIMEOUT` (default 90 s). When a task exceeds this, `withLimit` rejects the queued promise via `Promise.race` and the wrapper's `finally` decrements `activeCount` so the slot frees. The underlying Playwright call may still be running in background — that's a leaked resource the next browser restart cleans up — but it no longer blocks the queue. A queue-timeout rejection is reported as `error_type="queue_timeout"` in `extraction_worker_extractions_total`.
+
 ### Circuit Breaker
 
 Protects against repeated Chrome launch failures:
@@ -249,6 +254,8 @@ Protects against repeated Chrome launch failures:
 4. After 30 s, the next request attempts a launch. On success, failures reset to 0 and the circuit closes.
 
 **Watchdog:** A timer checks every 10 s (`WATCHDOG_INTERVAL`). If the circuit breaker has been continuously open longer than `CIRCUIT_BREAKER_EXIT_THRESHOLD` (default 120 s), the process exits with code 1 for container restart.
+
+The watchdog also detects a **wedged queue**: if `queue size >= STUCK_QUEUE_SIZE_THRESHOLD` AND the oldest running task has been running for `>= STUCK_QUEUE_AGE_THRESHOLD`, the process exits with code 1 for container restart. This guards against Patchright/CDP hangs that would otherwise leak both p-queue slots indefinitely.
 
 ### Extraction Pipeline
 
