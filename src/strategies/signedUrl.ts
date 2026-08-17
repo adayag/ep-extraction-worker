@@ -25,7 +25,8 @@ export function decodeObfuscatedBlob(html: string): string | null {
 
 export async function extractSignedUrl(embedUrl: string, timeout: number): Promise<ExtractedStream | null> {
   const res = await safeFetch(embedUrl, { timeout, headers: { 'User-Agent': UA } });
-  if (!res || res.status !== 200) return null;
+  if (!res) return null;
+  if (res.status !== 200) { res.body?.cancel().catch(() => {}); return null; }
   const html = await res.text();
   const decoded = decodeObfuscatedBlob(html) ?? html; // some pages may be plain
   const m = decoded.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/);

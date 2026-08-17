@@ -7,7 +7,8 @@ const DEFAULT_PATTERN = /https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/;
 
 export async function extractHttpToken(embedUrl: string, timeout: number, pattern?: string): Promise<ExtractedStream | null> {
   const res = await safeFetch(embedUrl, { timeout, headers: { 'User-Agent': UA } });
-  if (!res || res.status !== 200) return null;
+  if (!res) return null;
+  if (res.status !== 200) { res.body?.cancel().catch(() => {}); return null; }
   const html = await res.text();
   // Operators tune this pattern live, so a malformed one must degrade to a
   // pattern_miss rather than crash the request. ReDoS on a hand-tuned pattern

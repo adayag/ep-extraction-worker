@@ -33,6 +33,14 @@ describe('extractSignedUrl', () => {
     expect(r?.headers?.Referer).toBe('https://embed.example.top/');
     expect(r?.headers?.Origin).toBe('https://embed.example.top');
   });
+  it('cancels the body of a non-200 response it never reads', async () => {
+    const res = new Response('error page', { status: 403 });
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(res, 'body', { get: () => ({ cancel }) });
+    vi.mocked(fetch).mockResolvedValue(res);
+    expect(await extractSignedUrl('https://embed.example.top/embed/x', 5000)).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it('returns null when the decoded blob has no m3u8', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(fakeEmbed('var x=1;'), { status: 200 }));
     expect(await extractSignedUrl('https://embed.example.top/embed/x', 5000)).toBeNull();
