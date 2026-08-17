@@ -11,9 +11,12 @@ export function decodeObfuscatedBlob(html: string): string | null {
   const formula = html.match(/(\w+)\s*\[\s*\w+\s*\]\s*\^\s*(\w+)\s*\)\s*-\s*(\w+)\s*\+\s*256/);
   if (!formula) return null;
   const [, arrName, k1Name, k2Name] = formula;
-  const arrM = html.match(new RegExp(arrName + '\\s*=\\s*\\[([0-9,\\s]+)\\]'));
-  const k1M = html.match(new RegExp(k1Name + '\\s*=\\s*(\\d+)'));
-  const k2M = html.match(new RegExp(k2Name + '\\s*=\\s*(\\d+)'));
+  // Anchor to a variable boundary: a bare name would also match the tail of a
+  // longer identifier (name `k1` matching `_k1=999`) and decode garbage.
+  const B = '(?<![\\w$])';
+  const arrM = html.match(new RegExp(B + arrName + '\\s*=\\s*\\[([0-9,\\s]+)\\]'));
+  const k1M = html.match(new RegExp(B + k1Name + '\\s*=\\s*(\\d+)'));
+  const k2M = html.match(new RegExp(B + k2Name + '\\s*=\\s*(\\d+)'));
   if (!arrM || !k1M || !k2M) return null;
   const arr = arrM[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !Number.isNaN(n));
   const k1 = parseInt(k1M[1], 10);

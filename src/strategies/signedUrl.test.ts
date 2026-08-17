@@ -20,6 +20,17 @@ describe('decodeObfuscatedBlob', () => {
   it('returns null when no blob is present', () => {
     expect(decodeObfuscatedBlob('<html>nothing</html>')).toBeNull();
   });
+  it('ignores longer variables that merely end with the key name', () => {
+    // Decoys (_a/_k1/_k2) are declared first, so an unanchored name lookup
+    // picks them up and decodes garbage.
+    const k1 = 5, k2 = 18;
+    const js = 'var SIGNED_URL="https://cdn.example.com/secure/decoy/x.m3u8";';
+    const arr = [...js].map(ch => (((ch.charCodeAt(0) + k2) % 256) ^ k1));
+    const html = `<html><script>var _a=[1,2,3],_k1=999,_k2=777;` +
+      `var a=[${arr.join(',')}],k1=${k1},k2=${k2},s="",i;` +
+      `for(i=0;i<a.length;i++){s+=String.fromCharCode(((a[i]^k1)-k2+256)%256);}</script></html>`;
+    expect(decodeObfuscatedBlob(html)).toBe(js);
+  });
 });
 
 describe('extractSignedUrl', () => {
