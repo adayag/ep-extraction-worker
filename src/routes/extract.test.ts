@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-// Mock extractor before importing route
-vi.mock('../extractor.js', () => ({
-  extractM3u8: vi.fn(),
+// Mock the strategy dispatcher before importing route
+vi.mock('../strategies/index.js', () => ({
+  dispatchExtraction: vi.fn(),
 }));
 
 // Mock metrics to verify error type labels
@@ -17,11 +17,13 @@ vi.mock('../metrics.js', () => ({
     circuit_open: 'circuit_open',
     queue_timeout: 'queue_timeout',
     browser_error: 'browser_error',
+    pattern_miss: 'pattern_miss',
+    http_error: 'http_error',
   },
 }));
 
 import extractRouter from './extract.js';
-import { extractM3u8 } from '../extractor.js';
+import { dispatchExtraction } from '../strategies/index.js';
 import { QueueTaskTimeoutError } from '../browserPool.js';
 import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
@@ -73,7 +75,7 @@ describe('POST /extract', () => {
   });
 
   it('should return raw m3u8 URL on successful extraction', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: { Referer: 'https://embed.example.com/' },
     });
@@ -91,7 +93,7 @@ describe('POST /extract', () => {
   });
 
   it('should return success: false when extraction fails', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue(null);
+    vi.mocked(dispatchExtraction).mockResolvedValue(null);
 
     const res = await request(app)
       .post('/extract')
@@ -104,7 +106,7 @@ describe('POST /extract', () => {
   });
 
   it('should pass custom timeout to extractor', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
@@ -114,16 +116,19 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', timeout: 15000 });
 
-    expect(extractM3u8).toHaveBeenCalledWith(
+    expect(dispatchExtraction).toHaveBeenCalledWith(
       'https://embed.example.com/embed/admin/123',
-      15000,
-      0,
-      expect.any(Number) // queueEnqueueTime
+      expect.objectContaining({
+        timeout: 15000,
+        priority: 0,
+        strategy: 'browser',
+        queueEnqueueTime: expect.any(Number),
+      })
     );
   });
 
   it('should use default timeout when not specified', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
@@ -133,16 +138,19 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
 
-    expect(extractM3u8).toHaveBeenCalledWith(
+    expect(dispatchExtraction).toHaveBeenCalledWith(
       'https://embed.example.com/embed/admin/123',
-      30000,
-      0,
-      expect.any(Number) // queueEnqueueTime
+      expect.objectContaining({
+        timeout: 30000,
+        priority: 0,
+        strategy: 'browser',
+        queueEnqueueTime: expect.any(Number),
+      })
     );
   });
 
   it('should pass high priority (10) when priority is "high"', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
@@ -152,16 +160,19 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'high' });
 
-    expect(extractM3u8).toHaveBeenCalledWith(
+    expect(dispatchExtraction).toHaveBeenCalledWith(
       'https://embed.example.com/embed/admin/123',
-      30000,
-      10,
-      expect.any(Number) // queueEnqueueTime
+      expect.objectContaining({
+        timeout: 30000,
+        priority: 10,
+        strategy: 'browser',
+        queueEnqueueTime: expect.any(Number),
+      })
     );
   });
 
   it('should pass normal priority (0) when priority is "normal"', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
@@ -171,16 +182,19 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'normal' });
 
-    expect(extractM3u8).toHaveBeenCalledWith(
+    expect(dispatchExtraction).toHaveBeenCalledWith(
       'https://embed.example.com/embed/admin/123',
-      30000,
-      0,
-      expect.any(Number) // queueEnqueueTime
+      expect.objectContaining({
+        timeout: 30000,
+        priority: 0,
+        strategy: 'browser',
+        queueEnqueueTime: expect.any(Number),
+      })
     );
   });
 
   it('should treat invalid priority as normal (0)', async () => {
-    vi.mocked(extractM3u8).mockResolvedValue({
+    vi.mocked(dispatchExtraction).mockResolvedValue({
       url: 'https://cdn.example.com/stream.m3u8',
       headers: {},
     });
@@ -190,11 +204,14 @@ describe('POST /extract', () => {
       .set('Authorization', `Bearer ${TEST_SECRET}`)
       .send({ embedUrl: 'https://embed.example.com/embed/admin/123', priority: 'invalid' });
 
-    expect(extractM3u8).toHaveBeenCalledWith(
+    expect(dispatchExtraction).toHaveBeenCalledWith(
       'https://embed.example.com/embed/admin/123',
-      30000,
-      0,
-      expect.any(Number) // queueEnqueueTime
+      expect.objectContaining({
+        timeout: 30000,
+        priority: 0,
+        strategy: 'browser',
+        queueEnqueueTime: expect.any(Number),
+      })
     );
   });
 
@@ -311,7 +328,7 @@ describe('POST /extract', () => {
     });
 
     it('should accept valid https embed URL', async () => {
-      vi.mocked(extractM3u8).mockResolvedValue({
+      vi.mocked(dispatchExtraction).mockResolvedValue({
         url: 'https://cdn.example.com/stream.m3u8',
         headers: {},
       });
@@ -329,7 +346,7 @@ describe('POST /extract', () => {
   // Error type metrics tests
   describe('error type metrics', () => {
     it('should track success with error_type "none"', async () => {
-      vi.mocked(extractM3u8).mockResolvedValue({
+      vi.mocked(dispatchExtraction).mockResolvedValue({
         url: 'https://cdn.example.com/stream.m3u8',
         headers: {},
       });
@@ -343,6 +360,7 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'success',
         error_type: ERROR_TYPES.none,
+        strategy: 'browser',
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(
@@ -352,7 +370,7 @@ describe('POST /extract', () => {
     });
 
     it('should track timeout error_type when extraction returns null', async () => {
-      vi.mocked(extractM3u8).mockResolvedValue(null);
+      vi.mocked(dispatchExtraction).mockResolvedValue(null);
 
       await request(app)
         .post('/extract')
@@ -363,6 +381,7 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.timeout,
+        strategy: 'browser',
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(
@@ -372,7 +391,7 @@ describe('POST /extract', () => {
     });
 
     it('should track circuit_open error_type when circuit breaker throws', async () => {
-      vi.mocked(extractM3u8).mockRejectedValue(new Error('Circuit breaker open, retry in 30s'));
+      vi.mocked(dispatchExtraction).mockRejectedValue(new Error('Circuit breaker open, retry in 30s'));
 
       const res = await request(app)
         .post('/extract')
@@ -385,6 +404,7 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.circuit_open,
+        strategy: 'browser',
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(
@@ -394,7 +414,7 @@ describe('POST /extract', () => {
     });
 
     it('should track browser_error error_type for other errors', async () => {
-      vi.mocked(extractM3u8).mockRejectedValue(new Error('Browser crashed unexpectedly'));
+      vi.mocked(dispatchExtraction).mockRejectedValue(new Error('Browser crashed unexpectedly'));
 
       const res = await request(app)
         .post('/extract')
@@ -407,6 +427,7 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.browser_error,
+        strategy: 'browser',
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(
@@ -416,7 +437,7 @@ describe('POST /extract', () => {
     });
 
     it('should track queue_timeout error_type when QueueTaskTimeoutError thrown', async () => {
-      vi.mocked(extractM3u8).mockRejectedValue(new QueueTaskTimeoutError(90000));
+      vi.mocked(dispatchExtraction).mockRejectedValue(new QueueTaskTimeoutError(90000));
 
       const res = await request(app)
         .post('/extract')
@@ -429,6 +450,7 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.queue_timeout,
+        strategy: 'browser',
       });
       expect(extractionDuration.observe).toHaveBeenCalledTimes(1);
       expect(extractionDuration.observe).toHaveBeenCalledWith(
@@ -438,7 +460,7 @@ describe('POST /extract', () => {
     });
 
     it('should handle non-Error rejection as browser_error', async () => {
-      vi.mocked(extractM3u8).mockRejectedValue('string error without Error object');
+      vi.mocked(dispatchExtraction).mockRejectedValue('string error without Error object');
 
       const res = await request(app)
         .post('/extract')
@@ -451,6 +473,77 @@ describe('POST /extract', () => {
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.browser_error,
+        strategy: 'browser',
+      });
+    });
+  });
+
+  // Strategy dispatch tests
+  describe('strategy dispatch', () => {
+    it('defaults strategy to browser and passes it through', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://x/y.m3u8' });
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.top/e' });
+
+      expect(res.status).toBe(200);
+      expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({ strategy: 'browser' });
+    });
+
+    it('routes an explicit signed-url strategy', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://cdn/s.m3u8' });
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'signed-url' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.url).toBe('https://cdn/s.m3u8');
+      expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({ strategy: 'signed-url' });
+    });
+
+    it('labels a non-browser null result as pattern_miss', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'signed-url' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(false);
+      expect(extractionsTotal.inc).toHaveBeenCalledWith({
+        status: 'failure',
+        error_type: ERROR_TYPES.pattern_miss,
+        strategy: 'signed-url',
+      });
+    });
+
+    it('rejects an unknown strategy with 400', async () => {
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'bogus' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('strategy');
+      expect(dispatchExtraction).not.toHaveBeenCalled();
+    });
+
+    it('passes a custom pattern through to the dispatcher', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://cdn/s.m3u8' });
+
+      await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'http-token', pattern: 'src="([^"]+)"' });
+
+      expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({
+        strategy: 'http-token',
+        pattern: 'src="([^"]+)"',
       });
     });
   });
