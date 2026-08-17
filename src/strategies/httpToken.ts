@@ -9,7 +9,18 @@ export async function extractHttpToken(embedUrl: string, timeout: number, patter
   const res = await safeFetch(embedUrl, { timeout, headers: { 'User-Agent': UA } });
   if (!res || res.status !== 200) return null;
   const html = await res.text();
-  const re = pattern ? new RegExp(pattern) : DEFAULT_PATTERN;
+  // Operators tune this pattern live, so a malformed one must degrade to a
+  // pattern_miss rather than crash the request. ReDoS on a hand-tuned pattern
+  // is an accepted operator-controlled risk.
+  let re = DEFAULT_PATTERN;
+  if (pattern) {
+    try {
+      re = new RegExp(pattern);
+    } catch (err) {
+      consola.warn(`[http-token] invalid pattern ${JSON.stringify(pattern)}: ${err}`);
+      return null;
+    }
+  }
   const m = html.match(re);
   if (!m) { consola.debug('[http-token] no token match'); return null; }
   const url = m[1] ?? m[0]; // capture group 1 if the pattern has one

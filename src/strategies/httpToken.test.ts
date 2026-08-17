@@ -20,4 +20,8 @@ describe('extractHttpToken', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('<html>no stream</html>', { status: 200 }));
     expect(await extractHttpToken('https://embed.free.top/e', 5000)).toBeNull();
   });
+  it('returns null instead of throwing on an invalid operator pattern', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('https://x.top/a.m3u8', { status: 200 }));
+    await expect(extractHttpToken('https://embed.free.top/e', 5000, '(')).resolves.toBeNull();
+  });
 });
