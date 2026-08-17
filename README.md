@@ -22,6 +22,7 @@ npm run dev
 | `EXTRACTION_SECRET` | — | **Yes** | Shared secret for Bearer token auth |
 | `CHROME_PATH` | auto | No | Chrome binary path. When unset, Patchright uses `channel: 'chrome'` to auto-detect the installed Chrome. In Docker, explicitly set to `/usr/bin/google-chrome-stable`. |
 | `MAX_CONCURRENT` | `2` | No | Max simultaneous browser contexts (each uses ~150–300 MB) |
+| `LIGHT_MAX_CONCURRENT` | `8` | No | Max simultaneous HTTP-only extractions (`signed-url`, `http-token`). Runs on a separate queue so cheap fetches never wait behind Chrome. |
 | `BROWSER_IDLE_TIMEOUT` | `60000` | No | Close browser after this many ms idle (60 s) |
 | `BROWSER_MAX_AGE` | `7200000` | No | Force browser restart after this many ms (2 h) |
 | `SHUTDOWN_TIMEOUT` | `30000` | No | Max ms to wait for in-flight requests during graceful shutdown (30 s) |
@@ -83,6 +84,8 @@ Authorization: Bearer <EXTRACTION_SECRET>
 | `embedUrl` | Yes | — | Embed page URL. Must be `http`/`https`. Blocked for localhost, private IPs (127.x, 10.x, 172.16–31.x, 192.168.x, 169.254.x, 0.x), and IPv6 loopback. |
 | `timeout` | No | `30000` | Extraction timeout in ms |
 | `priority` | No | `"normal"` | `"high"` (priority 10) jumps queue; `"normal"` (priority 0) is FIFO |
+| `strategy` | No | `"browser"` | `"browser"` (Chrome queue), `"signed-url"` (fetch embed, decode inline obfuscated blob), or `"http-token"` (fetch embed, regex the stream URL). The HTTP strategies run on the light queue. Any other value returns `400`. |
+| `pattern` | No | — | `http-token` only: custom capture regex. Capture group 1 is the stream URL; defaults to the first `.m3u8` URL on the page. |
 
 **Response (success):**
 ```json
