@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import consola from 'consola';
 import { authMiddleware } from '../middleware/auth.js';
-import { extractM3u8 } from '../extractor.js';
+import { dispatchExtraction, type Strategy } from '../strategies/index.js';
+import { validateEmbedUrl } from '../ssrf.js';
 import { QueueTaskTimeoutError } from '../browserPool.js';
 import { extractionsTotal, extractionDuration, ERROR_TYPES } from '../metrics.js';
 
@@ -11,7 +12,11 @@ interface ExtractRequest {
   embedUrl: string;
   timeout?: number;
   priority?: 'high' | 'normal';
+  strategy?: Strategy;
+  pattern?: string;
 }
+
+const STRATEGIES: readonly Strategy[] = ['browser', 'signed-url', 'http-token'];
 
 // Priority levels: higher number = executes first
 const PRIORITY_LEVELS = {
@@ -31,54 +36,14 @@ function getShortId(embedUrl: string): string {
   }
 }
 
-// Validate embedUrl to prevent SSRF attacks
-function validateEmbedUrl(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return 'Invalid URL format';
-  }
-
-  // Only allow http and https schemes
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return `Blocked URL scheme: ${parsed.protocol}`;
-  }
-
-  // Strip brackets from IPv6 hostnames (URL parser wraps them in [])
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
-
-  // Block localhost variants
-  if (hostname === 'localhost' || hostname === 'localhost.') {
-    return 'Blocked hostname: localhost';
-  }
-
-  // Block IPv6 loopback and unspecified
-  if (hostname === '::1' || hostname === '::') {
-    return `Blocked IPv6 address: ${hostname}`;
-  }
-
-  // Block private/internal IPv4 ranges by pattern
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (
-      a === 127 ||                                   // 127.0.0.0/8 loopback
-      a === 10 ||                                    // 10.0.0.0/8 RFC1918
-      (a === 172 && b >= 16 && b <= 31) ||           // 172.16.0.0/12 RFC1918
-      (a === 192 && b === 168) ||                    // 192.168.0.0/16 RFC1918
-      (a === 169 && b === 254) ||                    // 169.254.0.0/16 link-local
-      a === 0                                        // 0.0.0.0/8
-    ) {
-      return `Blocked internal IP address: ${hostname}`;
-    }
-  }
-
-  return null;
-}
-
 router.post('/extract', authMiddleware, async (req, res) => {
-  const { embedUrl, timeout = 30000, priority: priorityParam } = req.body as ExtractRequest;
+  const {
+    embedUrl,
+    timeout = 30000,
+    priority: priorityParam,
+    strategy = 'browser',
+    pattern,
+  } = req.body as ExtractRequest;
 
   if (!embedUrl) {
     res.status(400).json({ error: 'embedUrl is required' });
@@ -91,21 +56,34 @@ router.post('/extract', authMiddleware, async (req, res) => {
     return;
   }
 
+  if (!STRATEGIES.includes(strategy)) {
+    res.status(400).json({ error: `Unknown strategy: ${strategy}` });
+    return;
+  }
+
   const queueEnqueueTime = Date.now();
   const shortId = getShortId(embedUrl);
   const priority = PRIORITY_LEVELS[priorityParam ?? 'normal'] ?? PRIORITY_LEVELS.normal;
   const priorityLabel = priority > 0 ? 'HIGH' : 'normal';
 
-  consola.info(`[Extract] QUEUED ${shortId} (priority: ${priorityLabel})`);
+  consola.info(`[Extract] QUEUED ${shortId} (priority: ${priorityLabel}, strategy: ${strategy})`);
 
   try {
-    const extracted = await extractM3u8(embedUrl, timeout, priority, queueEnqueueTime);
+    const extracted = await dispatchExtraction(embedUrl, {
+      timeout,
+      priority,
+      strategy,
+      pattern,
+      queueEnqueueTime,
+    });
     const duration = Date.now() - queueEnqueueTime;
     const durationSeconds = duration / 1000;
 
     if (!extracted) {
-      consola.warn(`[Extract] FAILED ${shortId} (${duration}ms) - timeout`);
-      extractionsTotal.inc({ status: 'failure', error_type: ERROR_TYPES.timeout });
+      // The browser path fails by timing out; HTTP strategies fail by not matching.
+      const missType = strategy === 'browser' ? ERROR_TYPES.timeout : ERROR_TYPES.pattern_miss;
+      consola.warn(`[Extract] FAILED ${shortId} (${duration}ms) - ${missType}`);
+      extractionsTotal.inc({ status: 'failure', error_type: missType, strategy });
       extractionDuration.observe({ status: 'failure' }, durationSeconds);
       res.json({
         success: false,
@@ -115,7 +93,7 @@ router.post('/extract', authMiddleware, async (req, res) => {
     }
 
     consola.info(`[Extract] OK ${shortId} (${duration}ms)`);
-    extractionsTotal.inc({ status: 'success', error_type: ERROR_TYPES.none });
+    extractionsTotal.inc({ status: 'success', error_type: ERROR_TYPES.none, strategy });
     extractionDuration.observe({ status: 'success' }, durationSeconds);
 
     res.json({
@@ -138,7 +116,7 @@ router.post('/extract', authMiddleware, async (req, res) => {
         : ERROR_TYPES.browser_error;
 
     consola.error(`[Extract] ERROR ${shortId} (${duration}ms) - ${errorType}:`, error);
-    extractionsTotal.inc({ status: 'failure', error_type: errorType });
+    extractionsTotal.inc({ status: 'failure', error_type: errorType, strategy });
     extractionDuration.observe({ status: 'failure' }, durationSeconds);
 
     res.status(503).json({

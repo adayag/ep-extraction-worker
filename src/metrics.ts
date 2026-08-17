@@ -42,12 +42,14 @@ export const ERROR_TYPES = {
   circuit_open: 'circuit_open',
   queue_timeout: 'queue_timeout',
   browser_error: 'browser_error',
+  pattern_miss: 'pattern_miss',
+  http_error: 'http_error',
 } as const;
 
 export const extractionsTotal = new Counter({
   name: 'extraction_worker_extractions_total',
   help: 'Total extractions',
-  labelNames: ['status', 'error_type'] as const,
+  labelNames: ['status', 'error_type', 'strategy'] as const,
   registers: [register],
 });
 
