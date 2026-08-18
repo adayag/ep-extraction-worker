@@ -492,17 +492,17 @@ describe('POST /extract', () => {
       expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({ strategy: 'browser' });
     });
 
-    it('routes an explicit signed-url strategy', async () => {
+    it('routes an explicit http-token strategy', async () => {
       vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://cdn/s.m3u8' });
 
       const res = await request(app)
         .post('/extract')
         .set('Authorization', `Bearer ${TEST_SECRET}`)
-        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'signed-url' });
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'http-token' });
 
       expect(res.status).toBe(200);
       expect(res.body.url).toBe('https://cdn/s.m3u8');
-      expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({ strategy: 'signed-url' });
+      expect(vi.mocked(dispatchExtraction).mock.calls[0][1]).toMatchObject({ strategy: 'http-token' });
     });
 
     it('labels a non-browser null result as pattern_miss', async () => {
@@ -511,14 +511,14 @@ describe('POST /extract', () => {
       const res = await request(app)
         .post('/extract')
         .set('Authorization', `Bearer ${TEST_SECRET}`)
-        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'signed-url' });
+        .send({ embedUrl: 'https://embed.example.top/e', strategy: 'http-token' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(false);
       expect(extractionsTotal.inc).toHaveBeenCalledWith({
         status: 'failure',
         error_type: ERROR_TYPES.pattern_miss,
-        strategy: 'signed-url',
+        strategy: 'http-token',
       });
     });
 

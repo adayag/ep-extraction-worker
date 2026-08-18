@@ -1,7 +1,7 @@
 import PQueue from 'p-queue';
 
 // Cheap HTTP strategies run here, NOT on the 2-slot browser queue, so a slow
-// Chrome extraction can never starve a fast signed-url/http-token fetch.
+// Chrome extraction can never starve a fast http-token fetch.
 // A non-numeric env value would make p-queue throw at import and stop the
 // worker from booting, so fall back to the default instead.
 const parsedMax = parseInt(process.env.LIGHT_MAX_CONCURRENT || '8', 10);

@@ -8,8 +8,8 @@ describe('metrics for strategies', () => {
   });
 
   it('extractionsTotal accepts a strategy label', async () => {
-    extractionsTotal.inc({ status: 'success', error_type: 'none', strategy: 'signed-url' });
+    extractionsTotal.inc({ status: 'success', error_type: 'none', strategy: 'http-token' });
     const txt = await register.metrics();
-    expect(txt).toContain('strategy="signed-url"');
+    expect(txt).toContain('strategy="http-token"');
   });
 });

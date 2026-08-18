@@ -16,7 +16,7 @@ interface ExtractRequest {
   pattern?: string;
 }
 
-const STRATEGIES: readonly Strategy[] = ['browser', 'signed-url', 'http-token'];
+const STRATEGIES: readonly Strategy[] = ['browser', 'http-token'];
 
 // Priority levels: higher number = executes first
 const PRIORITY_LEVELS = {
