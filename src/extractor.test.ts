@@ -264,6 +264,41 @@ describe('extractor', () => {
       expect(pageCloseOrder).toBeLessThan(contextCloseOrder);
     });
 
+    it('should navigate with the supplied referer', async () => {
+      mockPage.goto.mockImplementation(async () => {
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8(
+        'https://hamis.example.st/premiumtv/daddy3.php?id=347',
+        1000,
+        0,
+        undefined,
+        'https://dlstreams.example.st/'
+      );
+
+      expect(mockPage.goto).toHaveBeenCalledWith(
+        'https://hamis.example.st/premiumtv/daddy3.php?id=347',
+        expect.objectContaining({ referer: 'https://dlstreams.example.st/' })
+      );
+    });
+
+    it('should navigate without a referer when none is supplied', async () => {
+      mockPage.goto.mockImplementation(async () => {
+        const mockRoute = createMockRoute('https://cdn.example.com/stream.m3u8');
+        for (const cb of routeCallbacks) {
+          await cb(mockRoute);
+        }
+      });
+
+      await extractM3u8('https://embed.example.com/embed/admin/123', 1000);
+
+      expect(mockPage.goto.mock.calls[0][1].referer).toBeUndefined();
+    });
+
     it('should not close popup pages (closing breaks some embeds)', async () => {
       const mockContext = getMockContext();
       let pageHandler: ((page: unknown) => void) | null = null;

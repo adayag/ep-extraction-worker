@@ -9,12 +9,14 @@ export interface DispatchOpts {
   priority: number;
   strategy: Strategy;
   pattern?: string;
+  // Navigation referer for the browser strategy (ignored by HTTP strategies)
+  referer?: string;
   queueEnqueueTime?: number;
 }
 
 export async function dispatchExtraction(embedUrl: string, opts: DispatchOpts): Promise<ExtractedStream | null> {
   if (opts.strategy === 'browser') {
-    return extractM3u8(embedUrl, opts.timeout, opts.priority, opts.queueEnqueueTime);
+    return extractM3u8(embedUrl, opts.timeout, opts.priority, opts.queueEnqueueTime, opts.referer);
   }
   const run = () => extractHttpToken(embedUrl, opts.timeout, opts.pattern);
   return (await lightQueue.add(run)) ?? null;

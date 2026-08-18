@@ -75,7 +75,8 @@ async function tryClickInFrame(frame: Frame): Promise<void> {
 
 async function doExtraction(
   embedUrl: string,
-  timeout: number
+  timeout: number,
+  referer?: string
 ): Promise<ExtractedStream | null> {
   consola.debug(`[Extractor] Opening: ${embedUrl}`);
 
@@ -225,7 +226,10 @@ async function doExtraction(
 
     // Track navigation start time for m3u8 detection metric (set before goto in case goto fails)
     navigationStartTime = Date.now();
-    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    // Some embeds only arm the player when navigated with the parent page's referer
+    await page
+      .goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000, referer })
+      .catch(() => {});
 
     // Wait for page to settle (reduced from 2000ms)
     await page.waitForTimeout(500).catch(() => {});
@@ -271,8 +275,13 @@ export async function extractM3u8(
   embedUrl: string,
   timeout: number = 10000,
   priority: number = 0,
-  queueEnqueueTime?: number
+  queueEnqueueTime?: number,
+  referer?: string
 ): Promise<ExtractedStream | null> {
   // Run with concurrency limiting and priority
-  return browserPool.withLimit(() => doExtraction(embedUrl, timeout), priority, queueEnqueueTime);
+  return browserPool.withLimit(
+    () => doExtraction(embedUrl, timeout, referer),
+    priority,
+    queueEnqueueTime
+  );
 }

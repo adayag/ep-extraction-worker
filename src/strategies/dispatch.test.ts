@@ -14,6 +14,20 @@ describe('dispatchExtraction', () => {
     expect(extractM3u8).toHaveBeenCalledOnce();
     expect(extractHttpToken).not.toHaveBeenCalled();
   });
+  it('forwards the navigation referer to the browser extractor', async () => {
+    await dispatchExtraction('u', {
+      timeout: 5,
+      priority: 0,
+      strategy: 'browser',
+      queueEnqueueTime: 0,
+      referer: 'https://dlstreams.example.st/',
+    });
+    expect(extractM3u8).toHaveBeenCalledWith('u', 5, 0, 0, 'https://dlstreams.example.st/');
+  });
+  it('leaves the browser referer undefined when not supplied', async () => {
+    await dispatchExtraction('u', { timeout: 5, priority: 0, strategy: 'browser' });
+    expect(extractM3u8).toHaveBeenCalledWith('u', 5, 0, undefined, undefined);
+  });
   it('routes http-token off the browser queue', async () => {
     const r = await dispatchExtraction('u', { timeout: 1, priority: 0, strategy: 'http-token' });
     expect(r).toEqual({ url: 'token-url' });

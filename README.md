@@ -86,6 +86,7 @@ Authorization: Bearer <EXTRACTION_SECRET>
 | `priority` | No | `"normal"` | `"high"` (priority 10) jumps queue; `"normal"` (priority 0) is FIFO |
 | `strategy` | No | `"browser"` | `"browser"` (Chrome queue) or `"http-token"` (fetch embed, regex the stream URL). The HTTP strategy runs on the light queue. Any other value returns `400`. |
 | `pattern` | No | — | `http-token` only: custom capture regex. Capture group 1 is the stream URL; defaults to the first `.m3u8` URL on the page. |
+| `referer` | No | — | `browser` only: navigation referer sent when loading `embedUrl`. Needed by embeds that only arm the player when loaded from their parent page. Does not affect the playback headers returned in the response. |
 
 **Response (success):**
 ```json

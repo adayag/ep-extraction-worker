@@ -547,4 +547,37 @@ describe('POST /extract', () => {
       });
     });
   });
+
+  // Navigation referer tests
+  describe('navigation referer', () => {
+    it('passes referer through to the dispatcher', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://cdn/s.m3u8' });
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({
+          embedUrl: 'https://hamis.example.st/premiumtv/daddy3.php?id=347',
+          referer: 'https://dlstreams.example.st/',
+        });
+
+      expect(res.status).toBe(200);
+      expect(dispatchExtraction).toHaveBeenCalledWith(
+        'https://hamis.example.st/premiumtv/daddy3.php?id=347',
+        expect.objectContaining({ referer: 'https://dlstreams.example.st/' })
+      );
+    });
+
+    it('leaves referer undefined when not provided', async () => {
+      vi.mocked(dispatchExtraction).mockResolvedValue({ url: 'https://cdn/s.m3u8' });
+
+      const res = await request(app)
+        .post('/extract')
+        .set('Authorization', `Bearer ${TEST_SECRET}`)
+        .send({ embedUrl: 'https://embed.example.com/embed/admin/123' });
+
+      expect(res.status).toBe(200);
+      expect(vi.mocked(dispatchExtraction).mock.calls[0][1].referer).toBeUndefined();
+    });
+  });
 });

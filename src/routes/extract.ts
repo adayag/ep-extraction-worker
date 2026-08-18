@@ -14,6 +14,8 @@ interface ExtractRequest {
   priority?: 'high' | 'normal';
   strategy?: Strategy;
   pattern?: string;
+  // Navigation referer: some embeds only arm the player when loaded with the parent page's referer
+  referer?: string;
 }
 
 const STRATEGIES: readonly Strategy[] = ['browser', 'http-token'];
@@ -43,6 +45,7 @@ router.post('/extract', authMiddleware, async (req, res) => {
     priority: priorityParam,
     strategy = 'browser',
     pattern,
+    referer,
   } = req.body as ExtractRequest;
 
   if (!embedUrl) {
@@ -74,6 +77,7 @@ router.post('/extract', authMiddleware, async (req, res) => {
       priority,
       strategy,
       pattern,
+      referer,
       queueEnqueueTime,
     });
     const duration = Date.now() - queueEnqueueTime;
